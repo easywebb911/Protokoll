@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Protokoll-Assistent</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --mut:#5b6672; --line:#d9dee4; --acc:#0b5cab; --ok:#1a7f37; --bad:#b00020; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171a; --card:#1d2227; --ink:#e8ecef; --mut:#9aa6b2; --line:#323a42; --acc:#5aa9f0; --ok:#4cc26a; --bad:#ff6b81; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, -apple-system, "Segoe UI", Arial, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 8px 0 2px; }
+  .sub { color: var(--mut); margin: 0 0 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 12px 0; }
+  .card h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  label { display:block; font-size:.9rem; color:var(--mut); margin: 8px 0 3px; }
+  input[type=text], input[type=date], select, textarea { width:100%; padding:9px 10px; font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  .row > * { flex:1 1 200px; }
+  button { font:inherit; padding:10px 16px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button.rec { background:var(--bad); border-color:var(--bad); color:#fff; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .btns { display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+  .status { font-size:.92rem; color:var(--mut); margin-top:8px; white-space:pre-wrap; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
+  .bar { height:10px; background:var(--line); border-radius:6px; overflow:hidden; margin-top:8px; }
+  .bar > div { height:100%; width:0; background:var(--acc); transition:width .2s; }
+  .meter { height:8px; background:var(--line); border-radius:6px; overflow:hidden; margin-top:8px; }
+  .meter > div { height:100%; width:0; background:var(--ok); transition:width .08s; }
+  .timer { font-variant-numeric: tabular-nums; font-size:1.3rem; margin-top:8px; }
+  .seg { display:flex; gap:10px; padding:6px 0; border-bottom:1px solid var(--line); }
+  .seg .t { flex:0 0 74px; color:var(--mut); font-variant-numeric: tabular-nums; font-size:.9rem; padding-top:2px; }
+  .seg .x { flex:1; outline:none; }
+  .seg .x:focus { background: color-mix(in srgb, var(--acc) 12%, transparent); border-radius:4px; }
+  .check { display:flex; gap:10px; align-items:flex-start; color:var(--ink); font-size:1rem; }
+  .check input { margin-top:5px; width:20px; height:20px; }
+  small { color:var(--mut); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Protokoll-Assistent <small>Testversion</small></h1>
+  <p class="sub">Aufnehmen und Transkribieren direkt im Browser. Die Aufnahme verlässt dieses Gerät nicht.</p>
+
+  <div class="card" id="envCard">
+    <h2>0 · Gerätecheck</h2>
+    <div class="status" id="envStatus">Prüfe …</div>
+  </div>
+
+  <div class="card">
+    <h2>1 · Angaben (optional, kommen in den Kopf der Datei)</h2>
+    <label for="fTitle">Titel / Anlass</label>
+    <input type="text" id="fTitle" placeholder="z. B. Besprechung Fachschaft">
+    <div class="row">
+      <div><label for="fDate">Datum</label><input type="date" id="fDate"></div>
+    </div>
+    <label for="fPart">Teilnehmende</label>
+    <textarea id="fPart" rows="2" placeholder="Namen, getrennt durch Komma"></textarea>
+  </div>
+
+  <div class="card">
+    <h2>2 · Erkennungsmodell laden</h2>
+    <div class="row">
+      <div>
+        <label for="fModel">Modell</label>
+        <select id="fModel">
+          <option value="base">Schnell (base, ca. 150 MB), für den ersten Test</option>
+          <option value="small" selected>Ausgewogen (small, ca. 500 MB)</option>
+          <option value="turbo">Genau (large-v3-turbo, ca. 1,5 GB), nur bei starkem Gerät</option>
+        </select>
+      </div>
+      <div>
+        <label for="fLang">Sprache</label>
+        <select id="fLang"><option value="german" selected>Deutsch</option><option value="">Automatisch erkennen</option></select>
+      </div>
+    </div>
+    <div class="btns"><button class="primary" id="btnLoad">Modell laden</button></div>
+    <div class="bar"><div id="loadBar"></div></div>
+    <div class="status" id="loadStatus">Noch nicht geladen. Beim ersten Mal braucht das Internet, danach ist das Modell auf diesem Gerät gespeichert.</div>
+  </div>
+
+  <div class="card">
+    <h2>3 · Aufnahme</h2>
+    <label for="fMic">Mikrofon</label>
+    <select id="fMic"><option value="">Standard-Mikrofon</option></select>
+    <label class="check" style="margin-top:12px">
+      <input type="checkbox" id="fConsent">
+      <span>Alle Anwesenden sind mit der Aufnahme einverstanden.</span>
+    </label>
+    <div class="btns">
+      <button class="rec" id="btnRec" disabled>● Aufnahme starten</button>
+      <button id="btnStop" disabled>■ Beenden</button>
+      <button id="btnFile">Audiodatei laden …</button>
+      <input type="file" id="fFile" accept="audio/*,video/mp4,video/webm" hidden>
+    </div>
+    <div class="timer" id="timer">00:00:00</div>
+    <div class="meter"><div id="meter"></div></div>
+    <div class="status" id="recStatus">Das Mikrofon wird erst nach dem Start der Aufnahme freigegeben.</div>
+  </div>
+
+  <div class="card">
+    <h2>4 · Transkription</h2>
+    <div class="bar"><div id="trBar"></div></div>
+    <div class="status" id="trStatus">Wartet auf eine Aufnahme.</div>
+    <div class="btns"><button class="primary" id="btnTranscribe" disabled>Transkribieren</button></div>
+  </div>
+
+  <div class="card">
+    <h2>5 · Ergebnis <small>(Text lässt sich direkt anklicken und korrigieren)</small></h2>
+    <div id="segs"><small>Noch kein Text.</small></div>
+    <div class="btns">
+      <button class="primary" id="btnDocx" disabled>Volltranskript als Word</button>
+      <button id="btnTxt" disabled>Als Textdatei</button>
+      <button id="btnAudio" disabled>Audio sichern</button>
+    </div>
+    <div class="status">Das Volltranskript ist eine eigene Datei, getrennt von der späteren offiziellen Niederschrift. Die Audiodatei wird nur gespeichert, wenn du „Audio sichern“ drückst.</div>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/docx@9.11.0/dist/index.iife.js" onerror="window.__docxFail=true"></script>
+<script type="module">
+import { fmtTime, dateStamp, timeStamp, mixToMono, splitSegments, buildTranscriptDoc } from "./helpers.js";
+
+const TF_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1";
+const SR = 16000;
+const $ = (id) => document.getElementById(id);
+
+const MODELS = {
+  base:  { id: "onnx-community/whisper-base",           label: "base",           gpu: { encoder_model: "fp32", decoder_model_merged: "q4" } },
+  small: { id: "onnx-community/whisper-small",          label: "small",          gpu: { encoder_model: "fp32", decoder_model_merged: "q4" } },
+  turbo: { id: "onnx-community/whisper-large-v3-turbo", label: "large-v3-turbo", gpu: { encoder_model: "fp16", decoder_model_merged: "q4" } },
+};
+
+const state = {
+  tf: null, asr: null, modelKey: null, device: null,
+  stream: null, recorder: null, chunks: [], recStart: 0, timerHandle: null, audioCtx: null, meterHandle: null,
+  blob: null, samples: null, durationSec: 0,
+  segs: [], busy: false, wakeLock: null,
+};
+
+$("fDate").value = dateStamp();
+
+// ---------- Gerätecheck ----------
+(async function envCheck() {
+  const out = [];
+  const secure = window.isSecureContext;
+  out.push(secure ? "✔ Sichere Verbindung (nötig fürs Mikrofon)" : "✘ Keine sichere Verbindung: Mikrofon funktioniert nicht. Die Seite muss über https oder localhost geöffnet werden.");
+  let gpu = false;
+  try { if (navigator.gpu) { const a = await navigator.gpu.requestAdapter(); gpu = !!a; } } catch {}
+  out.push(gpu ? "✔ Grafikbeschleunigung (WebGPU) verfügbar: schnelle Erkennung" : "✘ Keine Grafikbeschleunigung: Erkennung läuft über den Prozessor und ist deutlich langsamer");
+  out.push(navigator.mediaDevices?.getUserMedia ? "✔ Mikrofonzugriff möglich" : "✘ Mikrofonzugriff nicht möglich");
+  out.push("serviceWorker" in navigator && location.protocol.startsWith("http") ? "✔ Offline-Speicherung möglich" : "• Offline-Speicherung nur, wenn die Seite über https geöffnet wird (nicht als Datei)");
+  if (window.__docxFail || !window.docx) out.push("✘ Word-Baustein konnte nicht geladen werden (Internet beim ersten Start nötig)");
+  $("envStatus").innerHTML = out.map((l) => `<div class="${l.startsWith("✔") ? "ok" : l.startsWith("✘") ? "bad" : ""}">${l}</div>`).join("");
+  state.gpuOk = gpu;
+})();
+
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  navigator.serviceWorker.register("./sw.js").catch(() => {});
+}
+
+// ---------- Bildschirm wach halten ----------
+async function keepAwake(on) {
+  try {
+    if (on && navigator.wakeLock && !state.wakeLock) state.wakeLock = await navigator.wakeLock.request("screen");
+    if (!on && state.wakeLock) { await state.wakeLock.release(); state.wakeLock = null; }
+  } catch {}
+}
+
+// ---------- Modell laden ----------
+$("btnLoad").onclick = async () => {
+  if (state.busy) return;
+  const key = $("fModel").value;
+  const m = MODELS[key];
+  state.busy = true; $("btnLoad").disabled = true;
+  const status = $("loadStatus"), bar = $("loadBar");
+  bar.style.width = "0%";
+  try {
+    status.textContent = "Lade Programmbaustein …";
+    if (!state.tf) {
+      state.tf = await import(TF_URL);
+      state.tf.env.allowLocalModels = false;
+    }
+    const files = {};
+    const progress = (p) => {
+      if (p.status === "progress" && p.file) {
+        files[p.file] = { loaded: p.loaded, total: p.total };
+        let l = 0, t = 0;
+        for (const f of Object.values(files)) { l += f.loaded; t += f.total; }
+        if (t) { bar.style.width = (100 * l / t).toFixed(0) + "%"; status.textContent = `Lade Modell: ${(l / 1e6).toFixed(0)} von ${(t / 1e6).toFixed(0)} MB`; }
+      } else if (p.status === "ready") {
+        status.textContent = "Modell wird gestartet …";
+      }
+    };
+    const attempts = [];
+    if (state.gpuOk) attempts.push({ device: "webgpu", dtype: m.gpu });
+    attempts.push({ device: "wasm", dtype: "q8" });
+    let lastErr = null;
+    state.asr = null;
+    for (const a of attempts) {
+      try {
+        status.textContent = a.device === "webgpu" ? "Lade Modell (Grafikbeschleunigung) …" : "Lade Modell (Prozessor) …";
+        state.asr = await state.tf.pipeline("automatic-speech-recognition", m.id, { device: a.device, dtype: a.dtype, progress_callback: progress });
+        state.device = a.device; state.modelKey = key;
+        break;
+      } catch (e) { lastErr = e; console.error(a, e); }
+    }
+    if (!state.asr) throw lastErr || new Error("Modell konnte nicht geladen werden");
+    bar.style.width = "100%";
+    status.innerHTML = `<span class="ok">✔ Modell „${m.label}“ bereit</span> (${state.device === "webgpu" ? "Grafikbeschleunigung" : "Prozessor"}).`;
+  } catch (e) {
+    status.innerHTML = `<span class="bad">✘ Fehler beim Laden: ${String(e && e.message || e)}</span>\nMögliche Ursachen: kein Internet beim ersten Laden, Downloads durch das Netzwerk blockiert, zu wenig Arbeitsspeicher.`;
+  } finally {
+    state.busy = false; $("btnLoad").disabled = false; refreshButtons();
+  }
+};
+
+// ---------- Mikrofone ----------
+async function listMics() {
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const sel = $("fMic"); const cur = sel.value;
+    sel.innerHTML = '<option value="">Standard-Mikrofon</option>';
+    for (const d of devs.filter((x) => x.kind === "audioinput")) {
+      const o = document.createElement("option"); o.value = d.deviceId; o.textContent = d.label || "Mikrofon"; sel.appendChild(o);
+    }
+    sel.value = cur;
+  } catch {}
+}
+listMics();
+
+function refreshButtons() {
+  const recording = state.recorder && state.recorder.state === "recording";
+  $("btnRec").disabled = !$("fConsent").checked || recording || state.busy;
+  $("btnStop").disabled = !recording;
+  $("btnFile").disabled = recording || state.busy;
+  $("btnTranscribe").disabled = !(state.asr && state.blob) || recording || state.busy;
+  const hasText = state.segs.some((s) => s.text.trim());
+  $("btnDocx").disabled = !hasText;
+  $("btnTxt").disabled = !hasText;
+  $("btnAudio").disabled = !state.blob;
+}
+$("fConsent").onchange = refreshButtons;
+
+// ---------- Aufnahme ----------
+$("btnRec").onclick = async () => {
+  if (!$("fConsent").checked) return;
+  try {
+    const id = $("fMic").value;
+    state.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: id ? { exact: id } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 },
+    });
+    await listMics();
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+    state.chunks = [];
+    state.recorder = new MediaRecorder(state.stream, mime ? { mimeType: mime } : undefined);
+    state.recorder.ondataavailable = (e) => { if (e.data && e.data.size) state.chunks.push(e.data); };
+    state.recorder.onstop = onRecordingStopped;
+    state.recorder.start(1000);
+    state.recStart = Date.now();
+    state.blob = null; state.samples = null; state.segs = []; renderSegs();
+    startMeter(); keepAwake(true);
+    state.timerHandle = setInterval(() => { $("timer").textContent = fmtTime((Date.now() - state.recStart) / 1000); }, 500);
+    $("recStatus").innerHTML = '<span class="bad">● Aufnahme läuft</span>';
+  } catch (e) {
+    $("recStatus").innerHTML = `<span class="bad">✘ Mikrofon nicht verfügbar: ${String(e && e.message || e)}</span>`;
+  }
+  refreshButtons();
+};
+
+$("btnStop").onclick = () => { if (state.recorder && state.recorder.state === "recording") state.recorder.stop(); };
+
+function onRecordingStopped() {
+  clearInterval(state.timerHandle);
+  stopMeter();
+  state.stream && state.stream.getTracks().forEach((t) => t.stop());
+  const type = state.recorder.mimeType || "audio/webm";
+  state.blob = new Blob(state.chunks, { type });
+  state.chunks = [];
+  state.durationSec = (Date.now() - state.recStart) / 1000;
+  $("recStatus").innerHTML = `<span class="ok">✔ Aufnahme beendet</span> (${fmtTime(state.durationSec)}, ${(state.blob.size / 1e6).toFixed(1)} MB). Mikrofon ist wieder frei.`;
+  keepAwake(false);
+  refreshButtons();
+}
+
+function startMeter() {
+  try {
+    state.audioCtx = new AudioContext();
+    const src = state.audioCtx.createMediaStreamSource(state.stream);
+    const an = state.audioCtx.createAnalyser(); an.fftSize = 1024; src.connect(an);
+    const buf = new Float32Array(an.fftSize);
+    const tick = () => {
+      an.getFloatTimeDomainData(buf);
+      let e = 0; for (let i = 0; i < buf.length; i++) e += buf[i] * buf[i];
+      const rms = Math.sqrt(e / buf.length);
+      $("meter").style.width = Math.min(100, rms * 400) + "%";
+      state.meterHandle = requestAnimationFrame(tick);
+    };
+    tick();
+  } catch {}
+}
+function stopMeter() {
+  cancelAnimationFrame(state.meterHandle); $("meter").style.width = "0%";
+  try { state.audioCtx && state.audioCtx.close(); } catch {}
+  state.audioCtx = null;
+}
+
+// ---------- Audiodatei laden (zum Testen oder für Aufnahmen vom Handy) ----------
+$("btnFile").onclick = () => $("fFile").click();
+$("fFile").onchange = async (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  if (!f) return;
+  state.blob = f; state.samples = null; state.segs = []; renderSegs();
+  state.durationSec = 0;
+  $("recStatus").innerHTML = `<span class="ok">✔ Datei geladen:</span> ${f.name} (${(f.size / 1e6).toFixed(1)} MB)`;
+  refreshButtons();
+};
+
+// ---------- Transkription ----------
+async function decodeToSamples(blob) {
+  const ctx = new AudioContext({ sampleRate: SR });
+  try {
+    const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+    const chans = []; for (let c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c));
+    return mixToMono(chans);
+  } finally { try { await ctx.close(); } catch {} }
+}
+
+$("btnTranscribe").onclick = async () => {
+  if (state.busy || !state.asr || !state.blob) return;
+  state.busy = true; refreshButtons(); keepAwake(true);
+  const st = $("trStatus"), bar = $("trBar");
+  bar.style.width = "0%"; state.segs = []; renderSegs();
+  const t0 = performance.now();
+  try {
+    st.textContent = "Bereite Audio auf …";
+    if (!state.samples) state.samples = await decodeToSamples(state.blob);
+    const samples = state.samples;
+    if (!state.durationSec) state.durationSec = samples.length / SR;
+    const parts = splitSegments(samples, SR, 300);
+    const lang = $("fLang").value;
+    for (let i = 0; i < parts.length; i++) {
+      const [a, b] = parts[i];
+      st.textContent = `Transkribiere Abschnitt ${i + 1} von ${parts.length} …`;
+      const opts = { task: "transcribe", return_timestamps: true, chunk_length_s: 30, stride_length_s: 5 };
+      if (lang) opts.language = lang;
+      const out = await state.asr(samples.subarray(a, b), opts);
+      const offset = a / SR;
+      const chunks = out.chunks && out.chunks.length ? out.chunks : [{ timestamp: [0, null], text: out.text || "" }];
+      for (const c of chunks) {
+        const text = (c.text || "").trim();
+        if (!text) continue;
+        state.segs.push({ start: offset + (c.timestamp[0] || 0), end: c.timestamp[1] == null ? null : offset + c.timestamp[1], text });
+      }
+      bar.style.width = ((i + 1) / parts.length * 100).toFixed(0) + "%";
+      renderSegs();
+    }
+    const secs = (performance.now() - t0) / 1000;
+    const ratio = secs / Math.max(1, samples.length / SR);
+    st.innerHTML = `<span class="ok">✔ Fertig</span> in ${fmtTime(secs)} für ${fmtTime(samples.length / SR)} Audio (Faktor ${ratio.toFixed(2)}: ${ratio < 1 ? "schneller" : "langsamer"} als Echtzeit).`;
+  } catch (e) {
+    st.innerHTML = `<span class="bad">✘ Fehler: ${String(e && e.message || e)}</span>\nBereits erkannter Text bleibt unten stehen.`;
+  } finally {
+    state.busy = false; keepAwake(false); refreshButtons();
+  }
+};
+
+function renderSegs() {
+  const box = $("segs");
+  if (!state.segs.length) { box.innerHTML = "<small>Noch kein Text.</small>"; refreshButtons(); return; }
+  box.innerHTML = "";
+  state.segs.forEach((s, i) => {
+    const row = document.createElement("div"); row.className = "seg";
+    const t = document.createElement("div"); t.className = "t"; t.textContent = fmtTime(s.start);
+    const x = document.createElement("div"); x.className = "x"; x.contentEditable = "plaintext-only"; x.textContent = s.text;
+    x.addEventListener("input", () => { state.segs[i].text = x.textContent; refreshButtons(); });
+    row.append(t, x); box.appendChild(row);
+  });
+  refreshButtons();
+}
+
+// ---------- Export ----------
+function download(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+function metaInfo() {
+  const d = $("fDate").value;
+  return {
+    title: $("fTitle").value.trim(),
+    date: d ? d.split("-").reverse().join(".") : "",
+    participants: $("fPart").value.trim(),
+    duration: state.durationSec ? fmtTime(state.durationSec) : "",
+    model: state.modelKey ? `Whisper ${MODELS[state.modelKey].label}` : "",
+  };
+}
+
+$("btnDocx").onclick = async () => {
+  if (!window.docx) { alert("Der Word-Baustein ist nicht geladen. Bitte einmal mit Internet neu laden."); return; }
+  const doc = buildTranscriptDoc(window.docx, metaInfo(), state.segs);
+  const blob = await window.docx.Packer.toBlob(doc);
+  download(blob, `Transkript_intern_${timeStamp()}.docx`);
+};
+$("btnTxt").onclick = () => {
+  const m = metaInfo();
+  const lines = ["VOLLTRANSKRIPT (nur intern)"];
+  if (m.title) lines.push(`Titel: ${m.title}`);
+  if (m.date) lines.push(`Datum: ${m.date}`);
+  if (m.participants) lines.push(`Teilnehmende: ${m.participants}`);
+  if (m.duration) lines.push(`Dauer: ${m.duration}`);
+  lines.push("", "");
+  const head = lines.join("\n");
+  const body = state.segs.filter((s) => s.text.trim()).map((s) => `[${fmtTime(s.start)}] ${s.text.trim()}`).join("\n");
+  download(new Blob([head + body + "\n"], { type: "text/plain;charset=utf-8" }), `Transkript_intern_${timeStamp()}.txt`);
+};
+$("btnAudio").onclick = () => {
+  if (!state.blob) return;
+  const ext = (state.blob.type || "").includes("mp4") ? "m4a" : (state.blob.type || "").includes("webm") ? "webm" : "audio";
+  download(state.blob, `Aufnahme_${timeStamp()}.${ext}`);
+};
+
+refreshButtons();
+</script>
+</body>
+</html>
