@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Protokoll-Assistent</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --mut:#5b6672; --line:#d9dee4; --acc:#0b5cab; --ok:#1a7f37; --bad:#b00020; }
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --mut:#5b6672; --line:#d9dee4; --acc:#0b5cab; --ok:#1a7f37; --bad:#b00020; --warn:#8a5a00; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg:#14171a; --card:#1d2227; --ink:#e8ecef; --mut:#9aa6b2; --line:#323a42; --acc:#5aa9f0; --ok:#4cc26a; --bad:#ff6b81; }
+    :root { --bg:#14171a; --card:#1d2227; --ink:#e8ecef; --mut:#9aa6b2; --line:#323a42; --acc:#5aa9f0; --ok:#4cc26a; --bad:#ff6b81; --warn:#f0b54a; }
   }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, -apple-system, "Segoe UI", Arial, sans-serif; }
@@ -16,6 +16,7 @@
   .sub { color: var(--mut); margin: 0 0 14px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 12px 0; }
   .card h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  .card.off { opacity:.55; }
   label { display:block; font-size:.9rem; color:var(--mut); margin: 8px 0 3px; }
   input[type=text], input[type=date], select, textarea { width:100%; padding:9px 10px; font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; }
   .row { display:flex; gap:10px; flex-wrap:wrap; }
@@ -23,10 +24,11 @@
   button { font:inherit; padding:10px 16px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
   button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
   button.rec { background:var(--bad); border-color:var(--bad); color:#fff; }
+  button.small { padding:4px 10px; font-size:.9rem; }
   button:disabled { opacity:.45; cursor:not-allowed; }
   .btns { display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
   .status { font-size:.92rem; color:var(--mut); margin-top:8px; white-space:pre-wrap; }
-  .ok { color:var(--ok); } .bad { color:var(--bad); }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
   .bar { height:10px; background:var(--line); border-radius:6px; overflow:hidden; margin-top:8px; }
   .bar > div { height:100%; width:0; background:var(--acc); transition:width .2s; }
   .meter { height:8px; background:var(--line); border-radius:6px; overflow:hidden; margin-top:8px; }
@@ -36,15 +38,20 @@
   .seg .t { flex:0 0 74px; color:var(--mut); font-variant-numeric: tabular-nums; font-size:.9rem; padding-top:2px; }
   .seg .x { flex:1; outline:none; }
   .seg .x:focus { background: color-mix(in srgb, var(--acc) 12%, transparent); border-radius:4px; }
+  .seg.pause .x { font-style:italic; color:var(--mut); }
   .check { display:flex; gap:10px; align-items:flex-start; color:var(--ink); font-size:1rem; }
   .check input { margin-top:5px; width:20px; height:20px; }
+  .hint { background: color-mix(in srgb, var(--warn) 12%, transparent); border-radius:8px; padding:8px 10px; margin-top:10px; font-size:.92rem; }
+  .repl { display:flex; gap:8px; align-items:center; padding:4px 0; border-bottom:1px solid var(--line); }
+  .repl span { flex:1; }
+  details summary { cursor:pointer; color:var(--acc); margin-top:6px; }
   small { color:var(--mut); }
 </style>
 </head>
 <body>
 <main>
   <h1>Protokoll-Assistent <small>Testversion</small></h1>
-  <p class="sub">Aufnehmen und Transkribieren direkt im Browser. Die Aufnahme verlässt dieses Gerät nicht.</p>
+  <p class="sub">Sitzung aufnehmen und live im Browser in Text umwandeln. Aufnahme und Text verlassen dieses Gerät nicht und werden nicht gespeichert.</p>
 
   <div class="card" id="envCard">
     <h2>0 · Gerätecheck</h2>
@@ -93,25 +100,50 @@
     </label>
     <div class="btns">
       <button class="rec" id="btnRec" disabled>● Aufnahme starten</button>
-      <button id="btnStop" disabled>■ Beenden</button>
-      <button id="btnFile">Audiodatei laden …</button>
-      <input type="file" id="fFile" accept="audio/*,video/mp4,video/webm" hidden>
+      <button id="btnPause" disabled>❚❚ Pause</button>
+      <button id="btnStop" disabled>■ Ende</button>
     </div>
     <div class="timer" id="timer">00:00:00</div>
     <div class="meter"><div id="meter"></div></div>
-    <div class="status" id="recStatus">Das Mikrofon wird erst nach dem Start der Aufnahme freigegeben.</div>
+    <div class="status" id="recStatus">Das Mikrofon wird erst nach dem Start der Aufnahme freigegeben. In der Pause wird es wieder freigegeben.</div>
+    <div class="hint" id="awakeHint">Während der Sitzung diesen Tab im Vordergrund lassen und den Laptop nicht zuklappen. Sonst kann die Erkennung stocken.</div>
   </div>
 
   <div class="card">
-    <h2>4 · Transkription</h2>
+    <h2>4 · Live-Erkennung</h2>
     <div class="bar"><div id="trBar"></div></div>
-    <div class="status" id="trStatus">Wartet auf eine Aufnahme.</div>
-    <div class="btns"><button class="primary" id="btnTranscribe" disabled>Transkribieren</button></div>
+    <div class="status" id="trStatus">Wartet auf die Aufnahme. Die Erkennung beginnt automatisch, sobald ein Modell geladen ist.</div>
+    <div class="status" id="filterStatus"></div>
+    <div class="btns">
+      <button id="btnTrPause" disabled>❚❚ Erkennung pausieren</button>
+      <button id="btnTrEnd" disabled>■ Erkennung beenden</button>
+    </div>
   </div>
 
   <div class="card">
-    <h2>5 · Ergebnis <small>(Text lässt sich direkt anklicken und korrigieren)</small></h2>
-    <div id="segs"><small>Noch kein Text.</small></div>
+    <h2>Ersatzliste <small>(Namen, Fachwörter)</small></h2>
+    <div class="row">
+      <div><label for="fFrom">falsch erkannt</label><input type="text" id="fFrom" placeholder="z. B. Maier"></div>
+      <div><label for="fTo">richtig</label><input type="text" id="fTo" placeholder="z. B. Meier"></div>
+    </div>
+    <div class="btns"><button id="btnReplAdd">Hinzufügen</button><button id="btnReplClear">Liste löschen</button></div>
+    <div id="replList"></div>
+    <div class="status" id="replStatus"></div>
+  </div>
+
+  <div class="card off" aria-disabled="true">
+    <h2>Protokoll (folgt)</h2>
+    <div class="status">Die Erstellung der Niederschrift kommt in einer späteren Version.</div>
+    <div class="btns"><button disabled>Protokoll erstellen</button></div>
+  </div>
+
+  <div class="card">
+    <h2>5 · Volltranskript (intern)</h2>
+    <details id="segBox">
+      <summary id="segSummary">Volltranskript anzeigen (noch leer)</summary>
+      <div class="status">Text lässt sich direkt anklicken und korrigieren. Die Ersatzliste wird beim Anzeigen und Exportieren angewendet.</div>
+      <div id="segs"><small>Noch kein Text.</small></div>
+    </details>
     <div class="btns">
       <button class="primary" id="btnDocx" disabled>Volltranskript als Word</button>
       <button id="btnTxt" disabled>Als Textdatei</button>
@@ -119,14 +151,35 @@
     </div>
     <div class="status">Das Volltranskript ist eine eigene Datei, getrennt von der späteren offiziellen Niederschrift. Die Audiodatei wird nur gespeichert, wenn du „Audio sichern“ drückst.</div>
   </div>
+
+  <div class="card">
+    <h2>Sitzung</h2>
+    <div class="btns"><button id="btnReset">Löschen / Neu starten</button></div>
+    <details>
+      <summary>Weitere Optionen</summary>
+      <div class="status">Eine fertige Audiodatei erkennen lassen (z. B. eine gesicherte Aufnahme oder eine Aufnahme vom Handy).</div>
+      <div class="btns">
+        <button id="btnFile">Audiodatei laden …</button>
+        <button id="btnFileTr" disabled>Datei erkennen</button>
+        <input type="file" id="fFile" accept="audio/*,video/mp4,video/webm" hidden>
+      </div>
+      <div class="status" id="fileStatus"></div>
+    </details>
+  </div>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/docx@9.11.0/dist/index.iife.js" onerror="window.__docxFail=true"></script>
 <script type="module">
-import { fmtTime, dateStamp, timeStamp, mixToMono, splitSegments, buildTranscriptDoc } from "./helpers.js";
+import {
+  fmtTime, dateStamp, timeStamp, mixToMono, buildTranscriptDoc,
+  Chunker, planChunks, sessionTime, pauseText, analyzeLevel, filterHallucinations,
+  normalizePairs, applyReplacements, createResampler,
+} from "./helpers.js";
 
 const TF_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1";
 const SR = 16000;
+const REPL_KEY = "protokoll.ersatzliste.v1"; // einziger Eintrag in localStorage
+const BACKLOG_WARN_SEC = 600; // ab 10 min Rückstand warnen
 const $ = (id) => document.getElementById(id);
 
 const MODELS = {
@@ -136,10 +189,18 @@ const MODELS = {
 };
 
 const state = {
-  tf: null, asr: null, modelKey: null, device: null,
-  stream: null, recorder: null, chunks: [], recStart: 0, timerHandle: null, audioCtx: null, meterHandle: null,
-  blob: null, samples: null, durationSec: 0,
-  segs: [], busy: false, wakeLock: null,
+  tf: null, asr: null, modelKey: null, device: null, loading: false, gpuOk: false, workletOk: false,
+  // Aufnahme: idle | recording | paused | stopped
+  rec: "idle", transition: false,
+  ctx: null, node: null, dest: null, analyser: null, source: null, stream: null,
+  recorder: null, recChunks: [], resample: null, chunker: null,
+  pauses: [], curPause: null, pauseWall: 0, startWall: 0, timerHandle: null, meterHandle: null,
+  blob: null, durationSec: 0, fileMode: false, fileQueued: false,
+  // Erkennung
+  queue: [], working: false, trPaused: false, trEnding: false, trEnded: false,
+  doneChunks: 0, silentChunks: 0, halluHits: 0, droppedChunks: 0, audioSecDone: 0, procSecs: 0,
+  segs: [], session: 1, wakeLock: null, hiddenCount: 0,
+  repl: [], replStorageOk: true,
 };
 
 $("fDate").value = dateStamp();
@@ -153,10 +214,19 @@ $("fDate").value = dateStamp();
   try { if (navigator.gpu) { const a = await navigator.gpu.requestAdapter(); gpu = !!a; } } catch {}
   out.push(gpu ? "✔ Grafikbeschleunigung (WebGPU) verfügbar: schnelle Erkennung" : "✘ Keine Grafikbeschleunigung: Erkennung läuft über den Prozessor und ist deutlich langsamer");
   out.push(navigator.mediaDevices?.getUserMedia ? "✔ Mikrofonzugriff möglich" : "✘ Mikrofonzugriff nicht möglich");
+  state.workletOk = secure && typeof AudioWorkletNode !== "undefined" && !!window.MediaRecorder;
+  out.push(state.workletOk ? "✔ Live-Aufnahme (AudioWorklet) möglich" : "✘ Live-Aufnahme nicht möglich (AudioWorklet oder MediaRecorder fehlt). Nur „Weitere Optionen → Audiodatei laden“ geht.");
+  out.push("wakeLock" in navigator ? "✔ Bildschirm kann wach gehalten werden" : "• Bildschirm-Wachhalten nicht verfügbar: Energiesparen und Bildschirmsperre bitte von Hand ausschalten");
   out.push("serviceWorker" in navigator && location.protocol.startsWith("http") ? "✔ Offline-Speicherung möglich" : "• Offline-Speicherung nur, wenn die Seite über https geöffnet wird (nicht als Datei)");
   if (window.__docxFail || !window.docx) out.push("✘ Word-Baustein konnte nicht geladen werden (Internet beim ersten Start nötig)");
-  $("envStatus").innerHTML = out.map((l) => `<div class="${l.startsWith("✔") ? "ok" : l.startsWith("✘") ? "bad" : ""}">${l}</div>`).join("");
+  const box = $("envStatus"); box.textContent = "";
+  for (const l of out) {
+    const d = document.createElement("div");
+    d.className = l.startsWith("✔") ? "ok" : l.startsWith("✘") ? "bad" : "";
+    d.textContent = l; box.appendChild(d);
+  }
   state.gpuOk = gpu;
+  refreshButtons();
 })();
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
@@ -166,17 +236,36 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
 // ---------- Bildschirm wach halten ----------
 async function keepAwake(on) {
   try {
-    if (on && navigator.wakeLock && !state.wakeLock) state.wakeLock = await navigator.wakeLock.request("screen");
+    if (on && navigator.wakeLock && !state.wakeLock) {
+      state.wakeLock = await navigator.wakeLock.request("screen");
+      state.wakeLock.addEventListener("release", () => { state.wakeLock = null; });
+    }
     if (!on && state.wakeLock) { await state.wakeLock.release(); state.wakeLock = null; }
   } catch {}
 }
+const needAwake = () => state.rec === "recording" || state.rec === "paused" || state.working || state.queue.length > 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") { if (needAwake()) keepAwake(true); }
+  else if (state.rec === "recording") { state.hiddenCount++; updateAwakeHint(); }
+});
+function updateAwakeHint() {
+  const h = $("awakeHint");
+  let t = "Während der Sitzung diesen Tab im Vordergrund lassen und den Laptop nicht zuklappen. Sonst kann die Erkennung stocken.";
+  if (!("wakeLock" in navigator)) t += "\nBildschirm-Wachhalten wird nicht unterstützt: Bildschirmsperre bitte von Hand ausschalten.";
+  if (state.hiddenCount) t += `\n⚠ Der Tab war während der Aufnahme ${state.hiddenCount}× im Hintergrund.`;
+  h.textContent = t;
+}
+updateAwakeHint();
+window.addEventListener("beforeunload", (e) => {
+  if (state.rec === "recording" || state.rec === "paused" || state.segs.length || state.blob) { e.preventDefault(); e.returnValue = ""; }
+});
 
 // ---------- Modell laden ----------
 $("btnLoad").onclick = async () => {
-  if (state.busy) return;
+  if (state.loading) return;
   const key = $("fModel").value;
   const m = MODELS[key];
-  state.busy = true; $("btnLoad").disabled = true;
+  state.loading = true; refreshButtons();
   const status = $("loadStatus"), bar = $("loadBar");
   bar.style.width = "0%";
   try {
@@ -200,22 +289,29 @@ $("btnLoad").onclick = async () => {
     if (state.gpuOk) attempts.push({ device: "webgpu", dtype: m.gpu });
     attempts.push({ device: "wasm", dtype: "q8" });
     let lastErr = null;
-    state.asr = null;
+    let asr = null;
     for (const a of attempts) {
       try {
         status.textContent = a.device === "webgpu" ? "Lade Modell (Grafikbeschleunigung) …" : "Lade Modell (Prozessor) …";
-        state.asr = await state.tf.pipeline("automatic-speech-recognition", m.id, { device: a.device, dtype: a.dtype, progress_callback: progress });
-        state.device = a.device; state.modelKey = key;
+        asr = await state.tf.pipeline("automatic-speech-recognition", m.id, { device: a.device, dtype: a.dtype, progress_callback: progress });
+        state.device = a.device;
         break;
       } catch (e) { lastErr = e; console.error(a, e); }
     }
-    if (!state.asr) throw lastErr || new Error("Modell konnte nicht geladen werden");
+    if (!asr) throw lastErr || new Error("Modell konnte nicht geladen werden");
+    // Wechsel erst, wenn kein Stück gerade erkannt wird
+    while (state.working) await new Promise((r) => setTimeout(r, 200));
+    state.asr = asr; state.modelKey = key;
     bar.style.width = "100%";
-    status.innerHTML = `<span class="ok">✔ Modell „${m.label}“ bereit</span> (${state.device === "webgpu" ? "Grafikbeschleunigung" : "Prozessor"}).`;
+    status.textContent = "";
+    const s = document.createElement("span"); s.className = "ok"; s.textContent = `✔ Modell „${m.label}“ bereit`;
+    status.append(s, ` (${state.device === "webgpu" ? "Grafikbeschleunigung" : "Prozessor"}).`);
   } catch (e) {
-    status.innerHTML = `<span class="bad">✘ Fehler beim Laden: ${String(e && e.message || e)}</span>\nMögliche Ursachen: kein Internet beim ersten Laden, Downloads durch das Netzwerk blockiert, zu wenig Arbeitsspeicher.`;
+    status.textContent = "";
+    const s = document.createElement("span"); s.className = "bad"; s.textContent = `✘ Fehler beim Laden: ${String(e && e.message || e)}`;
+    status.append(s, "\nMögliche Ursachen: kein Internet beim ersten Laden, Downloads durch das Netzwerk blockiert, zu wenig Arbeitsspeicher.");
   } finally {
-    state.busy = false; $("btnLoad").disabled = false; refreshButtons();
+    state.loading = false; refreshButtons(); pump();
   }
 };
 
@@ -234,93 +330,448 @@ async function listMics() {
 listMics();
 
 function refreshButtons() {
-  const recording = state.recorder && state.recorder.state === "recording";
-  $("btnRec").disabled = !$("fConsent").checked || recording || state.busy;
-  $("btnStop").disabled = !recording;
-  $("btnFile").disabled = recording || state.busy;
-  $("btnTranscribe").disabled = !(state.asr && state.blob) || recording || state.busy;
-  const hasText = state.segs.some((s) => s.text.trim());
+  const active = state.rec === "recording" || state.rec === "paused";
+  const t = state.transition;
+  $("btnLoad").disabled = state.loading;
+  $("btnRec").disabled = t || !$("fConsent").checked || state.rec !== "idle" || state.fileMode || !state.workletOk;
+  $("btnPause").disabled = t || !active;
+  $("btnPause").textContent = state.rec === "paused" ? "▶ Fortsetzen" : "❚❚ Pause";
+  $("btnStop").disabled = t || !active;
+  const trOpen = !state.trEnded && (active || state.working || state.queue.length > 0);
+  $("btnTrPause").disabled = !trOpen || state.trEnding;
+  $("btnTrPause").textContent = state.trPaused ? "▶ Erkennung fortsetzen" : "❚❚ Erkennung pausieren";
+  $("btnTrEnd").disabled = !trOpen || state.trEnding;
+  const hasText = state.segs.some((s) => s.kind !== "pause" && s.text.trim());
   $("btnDocx").disabled = !hasText;
   $("btnTxt").disabled = !hasText;
   $("btnAudio").disabled = !state.blob;
+  $("btnFile").disabled = t || active;
+  $("btnFileTr").disabled = !(state.fileMode && state.blob && !state.fileQueued);
+  $("btnReset").disabled = t;
 }
 $("fConsent").onchange = refreshButtons;
 
 // ---------- Aufnahme ----------
+function setRecStatus(cls, text) {
+  const st = $("recStatus"); st.textContent = "";
+  if (cls) { const s = document.createElement("span"); s.className = cls; s.textContent = text; st.appendChild(s); }
+  else st.textContent = text;
+}
+
+async function openMic() {
+  const id = $("fMic").value;
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { deviceId: id ? { exact: id } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 },
+  });
+  state.stream = stream;
+  state.source = state.ctx.createMediaStreamSource(stream);
+  state.source.connect(state.node);
+  state.source.connect(state.dest);
+  state.source.connect(state.analyser);
+  await listMics();
+}
+
+function closeMic() {
+  try { state.source && state.source.disconnect(); } catch {}
+  state.source = null;
+  state.stream && state.stream.getTracks().forEach((t) => t.stop());
+  state.stream = null;
+}
+
+// Restliche PCM-Daten aus dem Worklet holen und das laufende Stück abschließen
+function flushCapture() {
+  return new Promise((resolve) => {
+    const port = state.node.port;
+    const prev = port.onmessage;
+    const timer = setTimeout(done, 2000);
+    function done() { clearTimeout(timer); port.onmessage = prev; finishChunk(); resolve(); }
+    port.onmessage = (e) => { if (e.data === "flushed") done(); else prev(e); };
+    port.postMessage("flush");
+  });
+}
+function finishChunk() {
+  const last = state.chunker.flush();
+  if (last) enqueueLive(last);
+}
+
+function onPcm(e) {
+  if (!(e.data instanceof Float32Array)) return;
+  const data = state.resample(e.data);
+  for (const ch of state.chunker.push(data)) enqueueLive(ch);
+}
+
 $("btnRec").onclick = async () => {
-  if (!$("fConsent").checked) return;
+  if (!$("fConsent").checked || state.rec !== "idle") return;
+  state.transition = true; refreshButtons();
   try {
-    const id = $("fMic").value;
-    state.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { deviceId: id ? { exact: id } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 },
-    });
-    await listMics();
-    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
-    state.chunks = [];
-    state.recorder = new MediaRecorder(state.stream, mime ? { mimeType: mime } : undefined);
-    state.recorder.ondataavailable = (e) => { if (e.data && e.data.size) state.chunks.push(e.data); };
-    state.recorder.onstop = onRecordingStopped;
+    try { state.ctx = new AudioContext({ sampleRate: SR }); } catch { state.ctx = new AudioContext(); }
+    state.resample = createResampler(state.ctx.sampleRate, SR);
+    await state.ctx.audioWorklet.addModule("./pcm-worklet.js");
+    state.node = new AudioWorkletNode(state.ctx, "pcm-capture", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1, channelCountMode: "explicit" });
+    state.node.port.onmessage = onPcm;
+    state.node.connect(state.ctx.destination); // gibt nur Stille aus, hält den Knoten aktiv
+    state.dest = state.ctx.createMediaStreamDestination();
+    // Dauerhaft stille Quelle: ohne sie liefert der Browser in Pausen keine Audiodaten, und die Pause fehlte in der Datei
+    const hold = state.ctx.createConstantSource(); hold.offset.value = 0; hold.connect(state.dest); hold.start();
+    state.analyser = state.ctx.createAnalyser(); state.analyser.fftSize = 1024;
+    state.chunker = new Chunker(SR);
+    state.pauses = []; state.curPause = null;
+    await openMic();
+    // Das Audio für „Audio sichern“ läuft auch in Pausen weiter (dann still), damit die Zeiten zur Mitschrift passen.
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((t) => MediaRecorder.isTypeSupported(t));
+    state.recChunks = [];
+    state.recorder = new MediaRecorder(state.dest.stream, mime ? { mimeType: mime } : undefined);
+    state.recorder.ondataavailable = (e) => { if (e.data && e.data.size) state.recChunks.push(e.data); };
+    state.recorder.onstop = onRecorderStopped;
     state.recorder.start(1000);
-    state.recStart = Date.now();
-    state.blob = null; state.samples = null; state.segs = []; renderSegs();
+    if (state.ctx.state !== "running") await state.ctx.resume();
+    state.startWall = Date.now();
+    state.rec = "recording";
+    state.trEnded = false; state.trEnding = false;
     startMeter(); keepAwake(true);
-    state.timerHandle = setInterval(() => { $("timer").textContent = fmtTime((Date.now() - state.recStart) / 1000); }, 500);
-    $("recStatus").innerHTML = '<span class="bad">● Aufnahme läuft</span>';
+    state.timerHandle = setInterval(tick, 500);
+    setRecStatus("bad", "● Aufnahme läuft");
   } catch (e) {
-    $("recStatus").innerHTML = `<span class="bad">✘ Mikrofon nicht verfügbar: ${String(e && e.message || e)}</span>`;
+    teardownAudio();
+    state.rec = "idle";
+    setRecStatus("bad", `✘ Aufnahme nicht möglich: ${String(e && e.message || e)}`);
   }
-  refreshButtons();
+  state.transition = false; refreshButtons();
 };
 
-$("btnStop").onclick = () => { if (state.recorder && state.recorder.state === "recording") state.recorder.stop(); };
+function tick() {
+  $("timer").textContent = fmtTime((Date.now() - state.startWall) / 1000);
+  if (state.rec === "paused") setRecStatus("warn", `❚❚ Pause seit ${fmtTime((Date.now() - state.pauseWall) / 1000)} – Mikrofon ist frei`);
+  updateTrStatus();
+}
 
-function onRecordingStopped() {
-  clearInterval(state.timerHandle);
-  stopMeter();
-  state.stream && state.stream.getTracks().forEach((t) => t.stop());
-  const type = state.recorder.mimeType || "audio/webm";
-  state.blob = new Blob(state.chunks, { type });
-  state.chunks = [];
-  state.durationSec = (Date.now() - state.recStart) / 1000;
-  $("recStatus").innerHTML = `<span class="ok">✔ Aufnahme beendet</span> (${fmtTime(state.durationSec)}, ${(state.blob.size / 1e6).toFixed(1)} MB). Mikrofon ist wieder frei.`;
-  keepAwake(false);
+$("btnPause").onclick = async () => {
+  if (state.transition) return;
+  state.transition = true; refreshButtons();
+  try {
+    if (state.rec === "recording") {
+      state.pauseWall = Date.now();
+      closeMic();
+      stopMeter();
+      await flushCapture();
+      const recAt = state.chunker.recordedSamples / SR;
+      state.curPause = { recAt, from: sessionTime(recAt, state.pauses), to: null };
+      state.pauses.push(state.curPause);
+      state.rec = "paused";
+      tick();
+    } else if (state.rec === "paused") {
+      await openMic();
+      closePause();
+      state.rec = "recording";
+      startMeter(); keepAwake(true);
+      setRecStatus("bad", "● Aufnahme läuft");
+    }
+  } catch (e) {
+    setRecStatus("bad", `✘ Mikrofon nicht verfügbar: ${String(e && e.message || e)}. Bitte erneut „Fortsetzen“ drücken.`);
+  }
+  state.transition = false; refreshButtons();
+};
+
+// Laufende Pause abschließen und als Zeile ins Transkript schreiben
+function closePause() {
+  const p = state.curPause;
+  if (!p) return;
+  p.to = p.from + (Date.now() - state.pauseWall) / 1000;
+  addSeg({ start: p.from, text: pauseText(p), kind: "pause" });
+  state.curPause = null;
+}
+
+$("btnStop").onclick = async () => {
+  if (state.transition || (state.rec !== "recording" && state.rec !== "paused")) return;
+  state.transition = true; refreshButtons();
+  try {
+    if (state.rec === "recording") {
+      closeMic();
+      await flushCapture();
+    } else {
+      closePause(); // Ende während der Pause
+    }
+    state.durationSec = (Date.now() - state.startWall) / 1000;
+    clearInterval(state.timerHandle);
+    $("timer").textContent = fmtTime(state.durationSec);
+    stopMeter();
+    state.rec = "stopped";
+    if (state.recorder && state.recorder.state !== "inactive") state.recorder.stop();
+    else teardownAudio();
+  } finally {
+    state.transition = false; refreshButtons(); updateTrStatus();
+  }
+};
+
+function onRecorderStopped() {
+  const type = (state.recorder && state.recorder.mimeType) || "audio/webm";
+  state.blob = new Blob(state.recChunks, { type });
+  state.recChunks = [];
+  teardownAudio();
+  setRecStatus("ok", `✔ Aufnahme beendet (${fmtTime(state.durationSec)}, ${(state.blob.size / 1e6).toFixed(1)} MB). Mikrofon ist wieder frei.`);
+  if (!needAwake()) keepAwake(false);
   refreshButtons();
+}
+
+function teardownAudio() {
+  closeMic();
+  stopMeter();
+  clearInterval(state.timerHandle);
+  try { state.node && (state.node.port.onmessage = null); } catch {}
+  try { state.ctx && state.ctx.close(); } catch {}
+  state.ctx = null; state.node = null; state.dest = null; state.analyser = null;
 }
 
 function startMeter() {
-  try {
-    state.audioCtx = new AudioContext();
-    const src = state.audioCtx.createMediaStreamSource(state.stream);
-    const an = state.audioCtx.createAnalyser(); an.fftSize = 1024; src.connect(an);
-    const buf = new Float32Array(an.fftSize);
-    const tick = () => {
-      an.getFloatTimeDomainData(buf);
-      let e = 0; for (let i = 0; i < buf.length; i++) e += buf[i] * buf[i];
-      const rms = Math.sqrt(e / buf.length);
-      $("meter").style.width = Math.min(100, rms * 400) + "%";
-      state.meterHandle = requestAnimationFrame(tick);
-    };
-    tick();
-  } catch {}
+  if (!state.analyser) return;
+  const an = state.analyser;
+  const buf = new Float32Array(an.fftSize);
+  cancelAnimationFrame(state.meterHandle);
+  const step = () => {
+    an.getFloatTimeDomainData(buf);
+    let e = 0; for (let i = 0; i < buf.length; i++) e += buf[i] * buf[i];
+    $("meter").style.width = Math.min(100, Math.sqrt(e / buf.length) * 400) + "%";
+    state.meterHandle = requestAnimationFrame(step);
+  };
+  step();
 }
-function stopMeter() {
-  cancelAnimationFrame(state.meterHandle); $("meter").style.width = "0%";
-  try { state.audioCtx && state.audioCtx.close(); } catch {}
-  state.audioCtx = null;
+function stopMeter() { cancelAnimationFrame(state.meterHandle); $("meter").style.width = "0%"; }
+
+// ---------- Warteschlange und Erkennung ----------
+function enqueueLive(ch) {
+  const job = { samples: ch.samples, start: sessionTime(ch.start / SR, state.pauses) };
+  if (state.trEnded || state.trEnding) { state.droppedChunks++; updateTrStatus(); return; }
+  state.queue.push(job);
+  updateTrStatus();
+  pump();
 }
 
-// ---------- Audiodatei laden (zum Testen oder für Aufnahmen vom Handy) ----------
-$("btnFile").onclick = () => $("fFile").click();
-$("fFile").onchange = async (ev) => {
+async function pump() {
+  if (state.working) return;
+  state.working = true;
+  const token = state.session;
+  try {
+    while (token === state.session && state.queue.length && state.asr && !state.trPaused && !state.trEnded) {
+      const job = state.queue.shift();
+      refreshButtons(); updateTrStatus();
+      await transcribeJob(job, token);
+    }
+    if (token === state.session && state.trEnding && !state.queue.length) { state.trEnding = false; state.trEnded = true; }
+  } catch (e) {
+    $("trStatus").textContent = "";
+    const s = document.createElement("span"); s.className = "bad"; s.textContent = `✘ Fehler bei der Erkennung: ${String(e && e.message || e)}`;
+    $("trStatus").append(s, "\nBereits erkannter Text bleibt erhalten. Mit „Erkennung fortsetzen“ geht es weiter.");
+    state.trPaused = true;
+    state.working = false; refreshButtons();
+    return;
+  } finally {
+    state.working = false;
+  }
+  if (token !== state.session) { pump(); return; } // nach „Löschen / Neu starten“: neue Sitzung bedienen
+  if (!needAwake()) keepAwake(false);
+  refreshButtons(); updateTrStatus();
+}
+
+async function transcribeJob(job, token) {
+  const dur = job.samples.length / SR;
+  const lvl = analyzeLevel(job.samples, SR);
+  if (lvl.silent) { state.silentChunks++; state.doneChunks++; state.audioSecDone += dur; return; }
+  const lang = $("fLang").value;
+  const opts = { task: "transcribe", return_timestamps: true, chunk_length_s: 30, stride_length_s: 5 };
+  if (lang) opts.language = lang;
+  const t0 = performance.now();
+  const out = await state.asr(job.samples, opts);
+  if (token !== state.session) return; // inzwischen gelöscht
+  state.procSecs += (performance.now() - t0) / 1000;
+  state.audioSecDone += dur;
+  state.doneChunks++;
+  const chunks = out.chunks && out.chunks.length ? out.chunks : [{ timestamp: [0, null], text: out.text || "" }];
+  for (const c of chunks) {
+    const f = filterHallucinations((c.text || "").trim());
+    state.halluHits += f.hits;
+    if (!f.text) continue;
+    addSeg({ start: job.start + ((c.timestamp && c.timestamp[0]) || 0), text: f.text });
+  }
+}
+
+function updateTrStatus() {
+  const waiting = state.queue.length;
+  const waitSec = state.queue.reduce((a, j) => a + j.samples.length, 0) / SR;
+  const buffered = state.chunker && (state.rec === "recording") ? state.chunker.bufferedSamples / SR : 0;
+  const total = state.doneChunks + waiting + (state.working ? 1 : 0);
+  $("trBar").style.width = total ? (100 * state.doneChunks / total).toFixed(0) + "%" : "0%";
+  const l = [];
+  if (state.trEnded) l.push(state.droppedChunks ? "■ Erkennung beendet. Weitere Aufnahme ist nur im Audio enthalten." : "■ Erkennung beendet.");
+  else if (state.trEnding) l.push("Erkenne noch die offenen Stücke, dann ist Schluss …");
+  else if (state.trPaused) l.push("❚❚ Erkennung pausiert. Die Aufnahme läuft weiter, Stücke sammeln sich an.");
+  else if (!state.asr && (waiting || state.rec !== "idle")) l.push("Kein Modell geladen: Stücke warten, bis ein Modell geladen ist (Schritt 2).");
+  else if (state.working) l.push("Erkenne …");
+  else if (state.doneChunks && !waiting && (state.rec === "stopped" || (state.fileMode && state.fileQueued))) l.push("✔ Alles erkannt.");
+  l.push(`Stücke erkannt: ${state.doneChunks} · wartend: ${waiting}${waitSec ? ` (Rückstand ${fmtTime(waitSec)} Audio)` : ""}${buffered ? ` · im Aufbau: ${Math.round(buffered)} s` : ""}`);
+  if (state.audioSecDone && state.procSecs) l.push(`Tempo: ${(state.procSecs / state.audioSecDone).toFixed(2)} s Rechenzeit je s Audio (unter 1 = schneller als Echtzeit)`);
+  if (waitSec > BACKLOG_WARN_SEC) l.push(`⚠ Rückstand über ${BACKLOG_WARN_SEC / 60} min: Die Erkennung kommt nicht hinterher. Ein schnelleres Modell wäre besser.`);
+  $("trStatus").textContent = l.join("\n");
+  $("filterStatus").textContent = `Filter: ${state.silentChunks} stille Stücke übersprungen · ${state.halluHits} Halluzinationen entfernt${state.droppedChunks ? ` · ${state.droppedChunks} Stücke nach „Erkennung beenden“ nicht erkannt` : ""}`;
+}
+
+$("btnTrPause").onclick = () => {
+  state.trPaused = !state.trPaused;
+  refreshButtons(); updateTrStatus();
+  if (!state.trPaused) pump();
+};
+
+$("btnTrEnd").onclick = () => {
+  const n = state.queue.length;
+  if (n > 0) {
+    if (confirm(`Noch ${n} Stücke offen. Jetzt noch erkennen?`)) {
+      state.trEnding = true; state.trPaused = false;
+      pump();
+    } else {
+      state.droppedChunks += n;
+      state.queue = [];
+      state.trEnded = true;
+      $("fileStatus").textContent = "Rest verworfen. Das Audio kannst du nach dem Ende der Aufnahme mit „Audio sichern“ speichern und später hier erkennen lassen.";
+    }
+  } else if (state.working) {
+    state.trEnding = true;
+  } else {
+    state.trEnded = true;
+  }
+  refreshButtons(); updateTrStatus();
+};
+
+// ---------- Volltranskript anzeigen ----------
+function addSeg(seg) {
+  // nach Zeit einsortieren (Pausen-Zeilen kommen ggf. vor noch wartenden Stücken)
+  let i = state.segs.length;
+  while (i > 0 && state.segs[i - 1].start > seg.start) i--;
+  state.segs.splice(i, 0, seg);
+  const box = $("segs");
+  if (state.segs.length === 1) box.textContent = "";
+  const row = makeRow(seg);
+  const next = box.children[i];
+  box.insertBefore(row, next || null);
+  updateSegSummary();
+  refreshButtons();
+}
+
+function makeRow(seg) {
+  const row = document.createElement("div"); row.className = "seg" + (seg.kind === "pause" ? " pause" : "");
+  const t = document.createElement("div"); t.className = "t"; t.textContent = seg.kind === "pause" ? "" : fmtTime(seg.start);
+  const x = document.createElement("div"); x.className = "x";
+  if (seg.kind === "pause") x.textContent = seg.text;
+  else {
+    x.contentEditable = "plaintext-only";
+    x.textContent = applyReplacements(seg.text, state.repl);
+    x.addEventListener("input", () => { seg.text = x.textContent; refreshButtons(); });
+  }
+  row.append(t, x);
+  return row;
+}
+
+function renderSegs() {
+  const box = $("segs");
+  box.textContent = "";
+  if (!state.segs.length) { box.innerHTML = "<small>Noch kein Text.</small>"; }
+  else for (const s of state.segs) box.appendChild(makeRow(s));
+  updateSegSummary();
+  refreshButtons();
+}
+
+function updateSegSummary() {
+  const n = state.segs.filter((s) => s.kind !== "pause").length;
+  $("segSummary").textContent = n ? `Volltranskript anzeigen (${n} Zeilen)` : "Volltranskript anzeigen (noch leer)";
+}
+
+// ---------- Ersatzliste (einzige Angabe, die im Browser gespeichert wird) ----------
+function loadRepl() {
+  try {
+    const raw = localStorage.getItem(REPL_KEY);
+    state.repl = normalizePairs(raw ? JSON.parse(raw) : []);
+    state.replStorageOk = true;
+  } catch { state.repl = []; state.replStorageOk = false; }
+}
+function saveRepl() {
+  try {
+    if (state.repl.length) localStorage.setItem(REPL_KEY, JSON.stringify(state.repl));
+    else localStorage.removeItem(REPL_KEY);
+    state.replStorageOk = true;
+  } catch { state.replStorageOk = false; }
+}
+function renderRepl() {
+  const box = $("replList"); box.textContent = "";
+  state.repl.forEach(([from, to], i) => {
+    const r = document.createElement("div"); r.className = "repl";
+    const s = document.createElement("span"); s.textContent = `${from} → ${to}`;
+    const b = document.createElement("button"); b.className = "small"; b.textContent = "✕"; b.title = "Eintrag entfernen";
+    b.onclick = () => { state.repl.splice(i, 1); saveRepl(); renderRepl(); renderSegs(); };
+    r.append(s, b); box.appendChild(r);
+  });
+  $("replStatus").textContent = (state.replStorageOk
+    ? "Hinweis: Nur diese Liste wird in diesem Browser gespeichert (localStorage), damit sie beim nächsten Mal wieder da ist. Aufnahmen und Texte werden nie gespeichert."
+    : "Speichern im Browser ist nicht möglich: Die Liste gilt nur, bis die Seite geschlossen wird.")
+    + "\nErsetzt werden nur ganze Wörter; Groß- und Kleinschreibung zählt.";
+  $("btnReplClear").disabled = !state.repl.length;
+}
+$("btnReplAdd").onclick = () => {
+  const from = $("fFrom").value.trim(), to = $("fTo").value.trim();
+  if (!from) return;
+  state.repl = normalizePairs([...state.repl, [from, to]]);
+  $("fFrom").value = ""; $("fTo").value = "";
+  saveRepl(); renderRepl(); renderSegs();
+};
+$("btnReplClear").onclick = () => {
+  if (!confirm("Ersatzliste komplett löschen (auch aus dem Browser-Speicher)?")) return;
+  state.repl = []; saveRepl(); renderRepl(); renderSegs();
+};
+loadRepl(); renderRepl();
+
+// ---------- Löschen / Neu starten ----------
+$("btnReset").onclick = () => {
+  if (!confirm("Alles löschen und neu starten?\nAufnahme-Audio und Text werden aus dem Arbeitsspeicher entfernt. Das lässt sich nicht rückgängig machen.\n(Das geladene Modell und die Ersatzliste bleiben.)")) return;
+  resetAll();
+};
+
+function resetAll() {
+  state.session++; // laufende Erkennung verwirft ihren Text
+  if (state.recorder) { state.recorder.ondataavailable = null; state.recorder.onstop = null; try { if (state.recorder.state !== "inactive") state.recorder.stop(); } catch {} }
+  state.recorder = null; state.recChunks = [];
+  teardownAudio();
+  Object.assign(state, {
+    rec: "idle", transition: false, resample: null, chunker: null, pauses: [], curPause: null, pauseWall: 0, startWall: 0,
+    blob: null, durationSec: 0, fileMode: false, fileQueued: false,
+    queue: [], trPaused: false, trEnding: false, trEnded: false,
+    doneChunks: 0, silentChunks: 0, halluHits: 0, droppedChunks: 0, audioSecDone: 0, procSecs: 0,
+    segs: [], hiddenCount: 0,
+  });
+  for (const id of ["fTitle", "fPart"]) $(id).value = "";
+  $("fDate").value = dateStamp();
+  $("timer").textContent = "00:00:00";
+  $("trBar").style.width = "0%";
+  $("fileStatus").textContent = "";
+  $("fFile").value = "";
+  $("segBox").open = false;
+  setRecStatus("", "Gelöscht. Bereit für eine neue Aufnahme.");
+  keepAwake(false);
+  renderSegs(); updateTrStatus(); updateAwakeHint(); refreshButtons();
+}
+
+// ---------- Weitere Optionen: Audiodatei erkennen ----------
+$("btnFile").onclick = () => {
+  if (state.segs.length || state.blob || state.rec !== "idle") {
+    if (!confirm("Die aktuelle Sitzung (Audio und Text) wird dabei gelöscht. Fortfahren?")) return;
+    resetAll();
+  }
+  $("fFile").click();
+};
+$("fFile").onchange = (ev) => {
   const f = ev.target.files && ev.target.files[0];
   if (!f) return;
-  state.blob = f; state.samples = null; state.segs = []; renderSegs();
-  state.durationSec = 0;
-  $("recStatus").innerHTML = `<span class="ok">✔ Datei geladen:</span> ${f.name} (${(f.size / 1e6).toFixed(1)} MB)`;
+  state.blob = f; state.fileMode = true; state.fileQueued = false;
+  $("fileStatus").textContent = `✔ Datei geladen: ${f.name} (${(f.size / 1e6).toFixed(1)} MB). Jetzt „Datei erkennen“ drücken.`;
   refreshButtons();
 };
 
-// ---------- Transkription ----------
 async function decodeToSamples(blob) {
   const ctx = new AudioContext({ sampleRate: SR });
   try {
@@ -330,58 +781,24 @@ async function decodeToSamples(blob) {
   } finally { try { await ctx.close(); } catch {} }
 }
 
-$("btnTranscribe").onclick = async () => {
-  if (state.busy || !state.asr || !state.blob) return;
-  state.busy = true; refreshButtons(); keepAwake(true);
-  const st = $("trStatus"), bar = $("trBar");
-  bar.style.width = "0%"; state.segs = []; renderSegs();
-  const t0 = performance.now();
+$("btnFileTr").onclick = async () => {
+  if (!state.fileMode || !state.blob || state.fileQueued) return;
+  state.fileQueued = true; refreshButtons();
   try {
-    st.textContent = "Bereite Audio auf …";
-    if (!state.samples) state.samples = await decodeToSamples(state.blob);
-    const samples = state.samples;
-    if (!state.durationSec) state.durationSec = samples.length / SR;
-    const parts = splitSegments(samples, SR, 300);
-    const lang = $("fLang").value;
-    for (let i = 0; i < parts.length; i++) {
-      const [a, b] = parts[i];
-      st.textContent = `Transkribiere Abschnitt ${i + 1} von ${parts.length} …`;
-      const opts = { task: "transcribe", return_timestamps: true, chunk_length_s: 30, stride_length_s: 5 };
-      if (lang) opts.language = lang;
-      const out = await state.asr(samples.subarray(a, b), opts);
-      const offset = a / SR;
-      const chunks = out.chunks && out.chunks.length ? out.chunks : [{ timestamp: [0, null], text: out.text || "" }];
-      for (const c of chunks) {
-        const text = (c.text || "").trim();
-        if (!text) continue;
-        state.segs.push({ start: offset + (c.timestamp[0] || 0), end: c.timestamp[1] == null ? null : offset + c.timestamp[1], text });
-      }
-      bar.style.width = ((i + 1) / parts.length * 100).toFixed(0) + "%";
-      renderSegs();
-    }
-    const secs = (performance.now() - t0) / 1000;
-    const ratio = secs / Math.max(1, samples.length / SR);
-    st.innerHTML = `<span class="ok">✔ Fertig</span> in ${fmtTime(secs)} für ${fmtTime(samples.length / SR)} Audio (Faktor ${ratio.toFixed(2)}: ${ratio < 1 ? "schneller" : "langsamer"} als Echtzeit).`;
+    $("fileStatus").textContent = "Bereite Audio auf …";
+    const samples = await decodeToSamples(state.blob);
+    state.durationSec = samples.length / SR;
+    state.trEnded = false; state.trEnding = false;
+    for (const [a, b] of planChunks(samples, SR)) state.queue.push({ samples: samples.subarray(a, b), start: a / SR });
+    $("fileStatus").textContent = `${fmtTime(state.durationSec)} Audio in ${state.queue.length} Stücke geteilt. Fortschritt siehe „4 · Live-Erkennung“.`;
+    keepAwake(true);
+    updateTrStatus(); pump();
   } catch (e) {
-    st.innerHTML = `<span class="bad">✘ Fehler: ${String(e && e.message || e)}</span>\nBereits erkannter Text bleibt unten stehen.`;
-  } finally {
-    state.busy = false; keepAwake(false); refreshButtons();
+    state.fileQueued = false;
+    $("fileStatus").textContent = `✘ Datei konnte nicht gelesen werden: ${String(e && e.message || e)}`;
   }
-};
-
-function renderSegs() {
-  const box = $("segs");
-  if (!state.segs.length) { box.innerHTML = "<small>Noch kein Text.</small>"; refreshButtons(); return; }
-  box.innerHTML = "";
-  state.segs.forEach((s, i) => {
-    const row = document.createElement("div"); row.className = "seg";
-    const t = document.createElement("div"); t.className = "t"; t.textContent = fmtTime(s.start);
-    const x = document.createElement("div"); x.className = "x"; x.contentEditable = "plaintext-only"; x.textContent = s.text;
-    x.addEventListener("input", () => { state.segs[i].text = x.textContent; refreshButtons(); });
-    row.append(t, x); box.appendChild(row);
-  });
   refreshButtons();
-}
+};
 
 // ---------- Export ----------
 function download(blob, name) {
@@ -391,18 +808,25 @@ function download(blob, name) {
 }
 function metaInfo() {
   const d = $("fDate").value;
+  const dur = state.durationSec || (state.startWall && state.rec !== "idle" ? (Date.now() - state.startWall) / 1000 : 0);
   return {
     title: $("fTitle").value.trim(),
     date: d ? d.split("-").reverse().join(".") : "",
     participants: $("fPart").value.trim(),
-    duration: state.durationSec ? fmtTime(state.durationSec) : "",
+    duration: dur ? fmtTime(dur) : "",
     model: state.modelKey ? `Whisper ${MODELS[state.modelKey].label}` : "",
   };
+}
+// Text für den Export: Ersatzliste angewendet, Pausen-Zeilen unverändert
+function exportSegs() {
+  return state.segs
+    .filter((s) => s.text && s.text.trim())
+    .map((s) => (s.kind === "pause" ? s : { ...s, text: applyReplacements(s.text, state.repl) }));
 }
 
 $("btnDocx").onclick = async () => {
   if (!window.docx) { alert("Der Word-Baustein ist nicht geladen. Bitte einmal mit Internet neu laden."); return; }
-  const doc = buildTranscriptDoc(window.docx, metaInfo(), state.segs);
+  const doc = buildTranscriptDoc(window.docx, metaInfo(), exportSegs());
   const blob = await window.docx.Packer.toBlob(doc);
   download(blob, `Transkript_intern_${timeStamp()}.docx`);
 };
@@ -415,7 +839,7 @@ $("btnTxt").onclick = () => {
   if (m.duration) lines.push(`Dauer: ${m.duration}`);
   lines.push("", "");
   const head = lines.join("\n");
-  const body = state.segs.filter((s) => s.text.trim()).map((s) => `[${fmtTime(s.start)}] ${s.text.trim()}`).join("\n");
+  const body = exportSegs().map((s) => (s.kind === "pause" ? s.text.trim() : `[${fmtTime(s.start)}] ${s.text.trim()}`)).join("\n");
   download(new Blob([head + body + "\n"], { type: "text/plain;charset=utf-8" }), `Transkript_intern_${timeStamp()}.txt`);
 };
 $("btnAudio").onclick = () => {
@@ -424,6 +848,7 @@ $("btnAudio").onclick = () => {
   download(state.blob, `Aufnahme_${timeStamp()}.${ext}`);
 };
 
+updateTrStatus();
 refreshButtons();
 </script>
 </body>

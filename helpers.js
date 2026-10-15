@@ -110,6 +110,10 @@ export function buildTranscriptDoc(docxLib, meta, segs) {
     children.push(new Paragraph({ children: [run("(kein Text erkannt)")] }));
   }
   for (const s of rows) {
+    if (s.kind === "pause") {
+      children.push(new Paragraph({ spacing: { after: 100 }, children: [run(s.text.trim(), { italics: true, color: "555555" })] }));
+      continue;
+    }
     children.push(
       new Paragraph({
         spacing: { after: 100 },
@@ -146,4 +150,187 @@ export function buildTranscriptDoc(docxLib, meta, segs) {
       },
     ],
   });
+}
+
+// ---------- Live-Erkennung: Stücke, Zeitachse, Filter (rein, ohne Browser testbar) ----------
+
+// Länge der Stücke für die Live-Erkennung. Geschnitten wird an der leisesten Stelle zwischen MIN und MAX.
+export const CHUNK_MIN_SEC = 30;
+export const CHUNK_MAX_SEC = 60;
+
+// Nimmt fortlaufend PCM-Daten an und gibt fertige Stücke zurück, lückenlos und ohne Überlappung.
+// start = Position des ersten Samples in der Aufnahme (ohne Pausen gezählt).
+export class Chunker {
+  constructor(sr, { minSec = CHUNK_MIN_SEC, maxSec = CHUNK_MAX_SEC } = {}) {
+    this.sr = sr;
+    this.min = Math.floor(minSec * sr);
+    this.max = Math.floor(maxSec * sr);
+    this.buf = new Float32Array(this.max);
+    this.len = 0;
+    this.offset = 0;
+  }
+  get recordedSamples() { return this.offset + this.len; }
+  get bufferedSamples() { return this.len; }
+  push(data) {
+    const out = [];
+    let i = 0;
+    while (i < data.length) {
+      const n = Math.min(this.max - this.len, data.length - i);
+      this.buf.set(data.subarray(i, i + n), this.len);
+      this.len += n; i += n;
+      if (this.len === this.max) out.push(this._cut());
+    }
+    return out;
+  }
+  _cut() {
+    const cut = chooseCut(this.buf, this.sr, this.min, this.max);
+    const chunk = { start: this.offset, samples: this.buf.slice(0, cut) };
+    this.buf.copyWithin(0, cut, this.len);
+    this.len -= cut; this.offset += cut;
+    return chunk;
+  }
+  // Rest als letztes (kürzeres) Stück abgeben, z. B. bei Pause oder Ende
+  flush() {
+    if (!this.len) return null;
+    const chunk = { start: this.offset, samples: this.buf.slice(0, this.len) };
+    this.offset += this.len; this.len = 0;
+    return chunk;
+  }
+}
+
+// Schnittpunkt in buf[0..max): leiseste Stelle zwischen min und max
+function chooseCut(buf, sr, min, max) {
+  const cut = findCutPoint(buf, max, sr, (max - min) / sr);
+  return cut > 0 && cut <= max ? cut : max;
+}
+
+// Gleiche Planung für eine ganze Datei: liefert [start, ende]-Paare, ohne die Daten zu kopieren.
+export function planChunks(samples, sr, { minSec = CHUNK_MIN_SEC, maxSec = CHUNK_MAX_SEC } = {}) {
+  const min = Math.floor(minSec * sr), max = Math.floor(maxSec * sr);
+  const out = [];
+  let start = 0;
+  while (samples.length - start >= max) {
+    const cut = chooseCut(samples.subarray(start, start + max), sr, min, max);
+    out.push([start, start + cut]);
+    start += cut;
+  }
+  if (start < samples.length) out.push([start, samples.length]);
+  return out;
+}
+
+// Zeitachse mit Pausen. Eine Pause: { recAt: Aufnahme-Sekunde beim Pausieren, from, to: Sitzungszeit in s }.
+// Sitzungszeit = Aufnahmezeit + Dauer aller abgeschlossenen Pausen, die vorher begonnen haben.
+export function sessionTime(recSec, pauses) {
+  let t = recSec;
+  for (const p of pauses) if (p.recAt <= recSec && p.to != null) t += p.to - p.from;
+  return t;
+}
+
+export function pauseText(p) {
+  return `[Pause ${fmtTime(p.from)}–${fmtTime(p.to)}]`;
+}
+
+// Stille-Erkennung: Ein Stück gilt als still, wenn weniger als MIN_VOICED_SEC Sprache darin ist.
+export const SILENCE_FRAME_SEC = 0.1;   // Länge eines Messfensters
+export const SPEECH_FRAME_RMS = 0.008;  // ab dieser Lautstärke (RMS, ca. -42 dBFS) zählt ein Fenster als „Ton“
+export const MIN_VOICED_SEC = 0.4;      // so viel „Ton“ muss mindestens im Stück sein
+
+export function analyzeLevel(samples, sr, { frameSec = SILENCE_FRAME_SEC, speechRms = SPEECH_FRAME_RMS, minVoicedSec = MIN_VOICED_SEC } = {}) {
+  const frame = Math.max(1, Math.floor(frameSec * sr));
+  let voiced = 0, maxRms = 0;
+  for (let pos = 0; pos < samples.length; pos += frame) {
+    const end = Math.min(samples.length, pos + frame);
+    let e = 0;
+    for (let i = pos; i < end; i++) e += samples[i] * samples[i];
+    const r = Math.sqrt(e / (end - pos));
+    if (r > maxRms) maxRms = r;
+    if (r >= speechRms) voiced += end - pos;
+  }
+  const voicedSec = voiced / sr;
+  return { silent: voicedSec < minVoicedSec, voicedSec, maxRms };
+}
+
+// Bekannte Whisper-„Halluzinationen“ bei Stille (stammen aus Untertiteln im Trainingsmaterial).
+// Entfernt werden nur ganze Sätze, die einem Muster komplett entsprechen, und nur am Ende eines Textes.
+export const HALLUCINATION_PATTERNS = [
+  /untertitel(?:ung)?\s+(?:im auftrag|der amara|aufgrund der amara|von|des|by|durch)\b.*/i,
+  /untertitel(?:ung)?\s*:.*/i,
+  /(?:vielen\s+)?dank(?:e)?\s+f(?:ü|ue)r(?:s|'s|\s+das|\s+ihr|\s+eure)?\s+zu(?:schauen|sehen|hören)/i,
+  /copyright\b.*\b(?:wdr|zdf|swr|ndr|br|ard|mdr|hr|rbb)\b.*/i,
+  /©.*\b(?:wdr|zdf|swr|ndr|br|ard|mdr|hr|rbb)\b.*/i,
+  /(?:zdf|wdr|swr|ndr|ard|mdr)(?:\s*,\s*\d{4})?/i,
+  /(?:abonniert|abonnieren sie|abonniere)\b.*\bkanal\b.*/i,
+  /(?:wenn (?:euch|dir|ihnen) )?(?:das|dieses) video gefallen hat.*/i,
+  /[[(*♪\s]*musik[\])*♪\s]*/i,
+  /[♪♫\s]+/,
+];
+
+function isHallucinationSentence(s) {
+  const t = s.trim().replace(/[.!?…]+$/, "").trim();
+  if (!t) return true;
+  return HALLUCINATION_PATTERNS.some((re) => new RegExp(`^(?:${re.source})$`, re.flags).test(t));
+}
+
+// Entfernt Halluzinations-Sätze am Textende (bei reinen Halluzinationen bleibt leerer Text).
+export function filterHallucinations(text) {
+  let rest = String(text || "").trim();
+  let hits = 0;
+  while (rest) {
+    const parts = rest.split(/(?<=[.!?…])\s+/);
+    const last = parts[parts.length - 1];
+    if (!isHallucinationSentence(last)) break;
+    hits++;
+    parts.pop();
+    rest = parts.join(" ").trim();
+  }
+  return { text: rest, hits };
+}
+
+// Ersatzliste: Paare [falsch, richtig]. Nur ganze Wörter, Groß-/Kleinschreibung wird beachtet.
+export function normalizePairs(pairs) {
+  const seen = new Map();
+  for (const p of Array.isArray(pairs) ? pairs : []) {
+    if (!Array.isArray(p) || p.length < 2) continue;
+    const from = String(p[0] ?? "").trim(), to = String(p[1] ?? "").trim();
+    if (!from || from === to) continue;
+    seen.set(from, to);
+  }
+  return [...seen.entries()];
+}
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+export function applyReplacements(text, pairs) {
+  const list = normalizePairs(pairs).sort((a, b) => b[0].length - a[0].length);
+  if (!list.length || !text) return text;
+  const map = new Map(list);
+  const re = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${list.map((p) => escapeRe(p[0])).join("|")})(?![\\p{L}\\p{N}_])`, "gu");
+  return text.replace(re, (m) => map.get(m));
+}
+
+// Ersatz-Umrechnung der Abtastrate (nur falls der Browser keinen 16-kHz-Audiokontext erlaubt).
+// Mittelwert über das jeweilige Eingangsfenster; Zustand bleibt zwischen Aufrufen erhalten.
+export function createResampler(inRate, outRate) {
+  if (inRate === outRate) return (x) => x;
+  const step = inRate / outRate;
+  let pos = 0;
+  let carry = new Float32Array(0);
+  return (input) => {
+    let data = input;
+    if (carry.length) { data = new Float32Array(carry.length + input.length); data.set(carry); data.set(input, carry.length); }
+    const out = new Float32Array(Math.max(0, Math.floor((data.length - pos) / step) + 1));
+    let k = 0;
+    while (pos + step <= data.length) {
+      const a = Math.floor(pos), b = Math.floor(pos + step);
+      let v;
+      if (b <= a) v = data[a];
+      else { let s = 0; for (let i = a; i < b; i++) s += data[i]; v = s / (b - a); }
+      out[k++] = v;
+      pos += step;
+    }
+    const keep = Math.floor(pos);
+    carry = data.slice(keep);
+    pos -= keep;
+    return out.subarray(0, k);
+  };
 }
