@@ -334,3 +334,40 @@ export function createResampler(inRate, outRate) {
     return out.subarray(0, k);
   };
 }
+
+// Wiederholungsschleifen (Whisper hängt z. B. bei Musik): Ein Wort oder eine Gruppe aus bis zu
+// REPEAT_MAX_WORDS Wörtern, die mindestens REPEAT_MIN_COUNT-mal direkt hintereinander steht,
+// wird auf ein Vorkommen gekürzt. Satzzeichen und Groß-/Kleinschreibung zählen dabei nicht.
+// REPEAT_MIN_COUNT = 6 ist geschätzt: Echte Schleifen sind meist viel länger (gemessen: ca. 160×),
+// 5× kommt in normaler Rede gelegentlich vor und soll stehen bleiben.
+export const REPEAT_MIN_COUNT = 6;
+export const REPEAT_MAX_WORDS = 4;
+export const REPEAT_MARK = "[Wiederholung entfernt]";
+
+export function collapseRepeats(text, { minCount = REPEAT_MIN_COUNT, maxWords = REPEAT_MAX_WORDS } = {}) {
+  const tokens = String(text || "").split(/\s+/).filter(Boolean);
+  const keys = tokens.map((t) => t.toLowerCase().replace(/[^\p{L}\p{N}]/gu, ""));
+  const out = [];
+  let hits = 0;
+  let i = 0;
+  while (i < tokens.length) {
+    let found = 0, size = 0;
+    for (let n = 1; n <= maxWords && !found; n++) {
+      if (i + n * minCount > tokens.length) break;
+      if (keys.slice(i, i + n).some((k) => !k)) continue;
+      let count = 1;
+      while (i + (count + 1) * n <= tokens.length && keys.slice(i + count * n, i + (count + 1) * n).every((k, j) => k === keys[i + j])) count++;
+      if (count >= minCount) { found = count; size = n; }
+    }
+    if (found) {
+      const first = tokens.slice(i, i + size).join(" ").replace(/[\p{P}\s]+$/u, "");
+      out.push(`${first} ${REPEAT_MARK}`);
+      hits++;
+      i += found * size;
+    } else {
+      out.push(tokens[i]);
+      i++;
+    }
+  }
+  return { text: hits ? out.join(" ") : String(text || "").trim(), hits };
+}

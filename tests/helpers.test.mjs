@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   Chunker, planChunks, sessionTime, pauseText, analyzeLevel, filterHallucinations,
   normalizePairs, applyReplacements, createResampler, CHUNK_MIN_SEC, CHUNK_MAX_SEC,
+  collapseRepeats, REPEAT_MIN_COUNT, REPEAT_MAX_WORDS, pauseText as pauseLine,
 } from "../helpers.js";
 
 const SR = 16000;
@@ -222,4 +223,43 @@ test("2 Stunden live: Speicher begrenzt, lückenlos", () => {
   const last = c.flush(); if (last) check(last);
   assert.equal(next, total);
   console.log(`  2 h = ${total} Samples (${(total * 4 / 1e6).toFixed(1)} MB als Float32), ${count} Stücke, längstes ${(maxLen / SR).toFixed(1)} s, Puffer ${(c.buf.byteLength / 1e6).toFixed(2)} MB, ${(performance.now() - t0).toFixed(0)} ms`);
+});
+
+test("Wiederholungsschleifen: Zeile [00:38:06] (nachgebaut, 959 Zeichen)", () => {
+  const loop = "Nimm," + " nimm,".repeat(158) + " nimm.";
+  assert.equal(loop.length, 959);
+  assert.deepEqual(collapseRepeats(loop), { text: "Nimm [Wiederholung entfernt]", hits: 1 });
+});
+
+test("Wiederholungsschleifen: Schwelle und Fälle", () => {
+  assert.equal(REPEAT_MIN_COUNT, 6);
+  assert.equal(REPEAT_MAX_WORDS, 4);
+  const cases = [
+    ["Ja, ja, ja, ja.", "Ja, ja, ja, ja.", 0],
+    ["Ragebait, Ragebait, Ragebait, Ragebait, Ragebait ist das Jugendwort", "Ragebait, Ragebait, Ragebait, Ragebait, Ragebait ist das Jugendwort", 0],
+    ["nein nein nein nein nein nein", "nein [Wiederholung entfernt]", 1],
+    ["und so weiter ".repeat(6) + "Ende.", "und so weiter [Wiederholung entfernt] Ende.", 1],
+    ["und so weiter und so weiter.", "und so weiter und so weiter.", 0],
+    ["Okay! OKAY? okay, Okay. okay; okay", "Okay [Wiederholung entfernt]", 1],
+    ["Wir beginnen. Nimm nimm nimm nimm nimm nimm nimm Danach weiter.", "Wir beginnen. Nimm [Wiederholung entfernt] Danach weiter.", 1],
+    ["la la la la la la und dann blah, blah, blah, blah, blah, blah, blah.", "la [Wiederholung entfernt] und dann blah [Wiederholung entfernt]", 2],
+    ["eins zwei drei vier ".repeat(6).trim(), "eins zwei drei vier [Wiederholung entfernt]", 1],
+    ["a b c d e ".repeat(6).trim(), "a b c d e ".repeat(6).trim(), 0],
+    ["[Pause 00:01:00–00:02:00]", "[Pause 00:01:00–00:02:00]", 0],
+    ["  normaler Satz mit  Leerzeichen  ", "normaler Satz mit  Leerzeichen", 0],
+    ["", "", 0],
+  ];
+  for (const [inp, text, hits] of cases) assert.deepEqual(collapseRepeats(inp), { text, hits }, inp);
+  assert.deepEqual(collapseRepeats(null), { text: "", hits: 0 });
+  // Mit Schwelle 5 würde der Ragebait-Fall gekürzt (Konflikt, siehe Bericht)
+  assert.deepEqual(collapseRepeats("Ragebait, Ragebait, Ragebait, Ragebait, Ragebait ist das Jugendwort", { minCount: 5 }),
+    { text: "Ragebait [Wiederholung entfernt] ist das Jugendwort", hits: 1 });
+});
+
+test("Wiederholungsschleifen: kein Einfluss auf Pausen-Zeilen und Ersatzliste", () => {
+  const p = pauseLine({ from: 60, to: 120 });
+  assert.equal(collapseRepeats(p).text, p);
+  const t = collapseRepeats("Herr Maier sagt " + "nimm ".repeat(10)).text;
+  assert.equal(t, "Herr Maier sagt nimm [Wiederholung entfernt]");
+  assert.equal(applyReplacements(t, [["Maier", "Meier"], ["Wiederholung", "X"]]), "Herr Meier sagt nimm [X entfernt]");
 });
