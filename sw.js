@@ -1,6 +1,6 @@
 // Offline-Speicher für den Programmcode. Aufnahmen und Texte werden hier nie gespeichert oder gesendet.
-const VERSION = "protokoll-v1";
-const SHELL = ["./", "./index.html", "./helpers.js"];
+const VERSION = "protokoll-v2";
+const SHELL = ["./", "./index.html", "./helpers.js", "./pcm-worklet.js"];
 const CDN = "https://cdn.jsdelivr.net/";
 
 self.addEventListener("install", (e) => {
