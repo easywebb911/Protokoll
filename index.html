@@ -172,7 +172,7 @@
 <script type="module">
 import {
   fmtTime, dateStamp, timeStamp, mixToMono, buildTranscriptDoc,
-  Chunker, planChunks, sessionTime, pauseText, analyzeLevel, filterHallucinations,
+  Chunker, planChunks, sessionTime, pauseText, analyzeLevel, filterHallucinations, collapseRepeats,
   normalizePairs, applyReplacements, createResampler,
 } from "./helpers.js";
 
@@ -198,7 +198,7 @@ const state = {
   blob: null, durationSec: 0, fileMode: false, fileQueued: false,
   // Erkennung
   queue: [], working: false, trPaused: false, trEnding: false, trEnded: false,
-  doneChunks: 0, silentChunks: 0, halluHits: 0, droppedChunks: 0, audioSecDone: 0, procSecs: 0,
+  doneChunks: 0, silentChunks: 0, halluHits: 0, repeatHits: 0, droppedChunks: 0, audioSecDone: 0, procSecs: 0,
   segs: [], session: 1, wakeLock: null, hiddenCount: 0,
   repl: [], replStorageOk: true,
 };
@@ -587,7 +587,9 @@ async function transcribeJob(job, token) {
   state.doneChunks++;
   const chunks = out.chunks && out.chunks.length ? out.chunks : [{ timestamp: [0, null], text: out.text || "" }];
   for (const c of chunks) {
-    const f = filterHallucinations((c.text || "").trim());
+    const r = collapseRepeats((c.text || "").trim());
+    state.repeatHits += r.hits;
+    const f = filterHallucinations(r.text);
     state.halluHits += f.hits;
     if (!f.text) continue;
     addSeg({ start: job.start + ((c.timestamp && c.timestamp[0]) || 0), text: f.text });
@@ -611,7 +613,7 @@ function updateTrStatus() {
   if (state.audioSecDone && state.procSecs) l.push(`Tempo: ${(state.procSecs / state.audioSecDone).toFixed(2)} s Rechenzeit je s Audio (unter 1 = schneller als Echtzeit)`);
   if (waitSec > BACKLOG_WARN_SEC) l.push(`⚠ Rückstand über ${BACKLOG_WARN_SEC / 60} min: Die Erkennung kommt nicht hinterher. Ein schnelleres Modell wäre besser.`);
   $("trStatus").textContent = l.join("\n");
-  $("filterStatus").textContent = `Filter: ${state.silentChunks} stille Stücke übersprungen · ${state.halluHits} Halluzinationen entfernt${state.droppedChunks ? ` · ${state.droppedChunks} Stücke nach „Erkennung beenden“ nicht erkannt` : ""}`;
+  $("filterStatus").textContent = `Filter: ${state.silentChunks} stille Stücke übersprungen · ${state.halluHits} Halluzinationen entfernt · ${state.repeatHits} Wiederholungen entfernt${state.droppedChunks ? ` · ${state.droppedChunks} Stücke nach „Erkennung beenden“ nicht erkannt` : ""}`;
 }
 
 $("btnTrPause").onclick = () => {
@@ -741,7 +743,7 @@ function resetAll() {
     rec: "idle", transition: false, resample: null, chunker: null, pauses: [], curPause: null, pauseWall: 0, startWall: 0,
     blob: null, durationSec: 0, fileMode: false, fileQueued: false,
     queue: [], trPaused: false, trEnding: false, trEnded: false,
-    doneChunks: 0, silentChunks: 0, halluHits: 0, droppedChunks: 0, audioSecDone: 0, procSecs: 0,
+    doneChunks: 0, silentChunks: 0, halluHits: 0, repeatHits: 0, droppedChunks: 0, audioSecDone: 0, procSecs: 0,
     segs: [], hiddenCount: 0,
   });
   for (const id of ["fTitle", "fPart"]) $(id).value = "";
