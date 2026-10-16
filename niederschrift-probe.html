@@ -79,18 +79,16 @@
     <h2>2 · Sprachmodell laden</h2>
     <label for="fModel">Modell</label>
     <select id="fModel">
-      <option value="Qwen3-4B-q4f16_1-MLC" selected>Qwen3 4B (Standard) – Download ca. 2,3 GB*, Grafikspeicher ca. 3,4 GB</option>
-      <option value="Qwen3-4B-q4f32_1-MLC">Qwen3 4B, Ersatz falls „f16“ fehlt – Download ca. 2,3 GB*, Grafikspeicher ca. 4,3 GB</option>
-      <option value="gemma-2-2b-it-q4f16_1-MLC">Gemma 2 2B (Vergleich, klein) – Download ca. 1,5 GB*, Grafikspeicher ca. 1,9 GB</option>
-      <option value="gemma-2-2b-it-q4f32_1-MLC">Gemma 2 2B, Ersatz falls „f16“ fehlt – Download ca. 1,5 GB*, Grafikspeicher ca. 2,5 GB</option>
-      <option value="gemma3-1b-it-q4f16_1-MLC">Gemma 3 1B (sehr klein) – Download ca. 0,7 GB*, Grafikspeicher ca. 0,7 GB</option>
-      <option value="Llama-3.1-8B-Instruct-q4f16_1-MLC">⚠ Llama 3.1 8B (groß, nur mit Warnung) – Download ca. 4,6 GB*, Grafikspeicher ca. 5,0 GB</option>
+      <option value="gemma3-1b-it-q4f16_1-MLC">Gemma 3 1B – Download ca. 0,7 GB*, Grafikspeicher 0,7 GB</option>
+      <option value="Qwen3-1.7B-q4f16_1-MLC" selected>Qwen3 1.7B – Download ca. 1,0 GB*, Grafikspeicher 2,0 GB</option>
+      <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama 3.2 3B – Download ca. 1,8 GB*, Grafikspeicher 2,3 GB</option>
+      <option value="Qwen3-4B-q4f16_1-MLC">⚠ Qwen3 4B (nur mit Warnung) – Download ca. 2,3 GB*, Grafikspeicher 3,4 GB</option>
     </select>
     <div class="status" id="modelHint"></div>
     <div class="btns"><button class="primary" id="btnLoad">Modell laden</button></div>
     <div class="bar"><div id="loadBar"></div></div>
     <div class="status" id="loadStatus">Noch nicht geladen. Beim ersten Mal braucht es Internet; danach liegt das Modell im Browser-Speicher dieses Geräts.
-* Downloadgröße geschätzt; die echte Größe steht beim Laden hier.</div>
+* Downloadgröße geschätzt (nicht prüfbar); die echte Größe steht beim Laden hier. Grafikspeicher laut Konfiguration von WebLLM 0.2.85.</div>
   </div>
 
   <div class="card">
@@ -390,16 +388,59 @@ function buildHeader(meta) {
   if (meta.agenda.length) l.push("", "Tagesordnung:", ...meta.agenda.map((a) => `TOP ${a.n}: ${a.title}`));
   return l.join("\n");
 }
+
+// ---- Kontextfenster (WebLLM 0.2.85) ----
+// Modelle, deren mlc-chat-config.json (Hugging Face) ein Sliding Window mitbringt, für die die Modellliste
+// von WebLLM aber nur context_window_size setzt. Beleg Gemma 3 1B: WindowSizeConfigurationError auf Easys
+// Laptop mit "context_window_size: 4096, sliding_window_size: 512". WebLLM erlaubt nur EINEN positiven Wert.
+const SLIDING_WINDOW_MODELS = { "gemma3-1b-it-q4f16_1-MLC": 512 };
+
+// Liefert den Modelleintrag mit korrigiertem Override (context_window_size -1, Sliding Window behalten).
+function fixWindowOverrides(record, known = SLIDING_WINDOW_MODELS) {
+  const sw = known[record.model_id];
+  if (!sw) return record;
+  return { ...record, overrides: { ...(record.overrides || {}), context_window_size: -1, sliding_window_size: sw } };
+}
+
+// Wie viele Tokens das Modell tatsächlich gleichzeitig sieht. Bei Sliding Window ist der Zwischenspeicher
+// (KV-Cache) nur so groß wie das Fenster – ältere Tokens fallen heraus.
+function effectiveContext(record) {
+  const o = record.overrides || {};
+  if (o.sliding_window_size > 0) return { tokens: o.sliding_window_size, sliding: true };
+  return { tokens: o.context_window_size > 0 ? o.context_window_size : 0, sliding: false };
+}
+
+function buildAppConfig(prebuilt, known = SLIDING_WINDOW_MODELS) {
+  return { ...prebuilt, model_list: prebuilt.model_list.map((m) => fixWindowOverrides(m, known)) };
+}
+
+// Fehler, nach denen das Modell nicht mehr nutzbar ist (Gerät verloren, entladen, freigegeben)
+function isEngineLost(text) {
+  return /DeviceLost|Device was lost|device lost|ModelNotLoaded|Model not loaded|already been disposed/i.test(String(text || ""));
+}
 // ==== REINE FUNKTIONEN ENDE ====
 
 // ---------- Ab hier: Browser-Teil ----------
 const WEBLLM_URL = "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.85/lib/index.js";
-const BIG_MODELS = new Set(["Llama-3.1-8B-Instruct-q4f16_1-MLC"]);
+const BIG_MODELS = new Set(["Qwen3-4B-q4f16_1-MLC"]);
 const $ = (id) => document.getElementById(id);
 
 const state = {
   webllm: null, engine: null, modelId: null, modelCfg: null, loadSecs: null,
   gpuOk: false, f16: false, busy: false, cancel: false, wakeLock: null,
+  loading: false, running: false, autoReloadUsed: false, lostPending: false, lastLost: "",
+};
+
+// Geräteverlust sichtbar machen: WebLLM 0.2.85 meldet ihn nur über die Konsole
+// (lib/index.js Z. 13107: log.error("Device was lost. …")) und entlädt dann still das Modell.
+// Der Wächter wird VOR dem Laden der Bibliothek eingerichtet, weil sie ihre Log-Ausgabe beim Start bindet.
+const origConsoleError = console.error.bind(console);
+console.error = (...args) => {
+  origConsoleError(...args);
+  try {
+    const t = args.map((a) => (a && a.message) || String(a)).join(" ");
+    if (/Device was lost/i.test(t)) onEngineLost(t);
+  } catch {}
 };
 
 $("fDate").value = (() => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; })();
@@ -412,7 +453,8 @@ function errText(e) {
 }
 function explain(e) {
   const t = errText(e);
-  if (/DeviceLost|device was lost|device lost/i.test(t)) return "Gerät verloren (WebGPU). Meist ist der Grafikspeicher zu knapp. Ein kleineres Modell wählen oder andere Programme/Tabs schließen und die Seite neu laden.";
+  if (isEngineLost(t)) return "Gerät verloren – Modell wurde entladen (WebGPU). Meist ist der Grafikspeicher zu knapp. Ein kleineres Modell wählen oder andere Programme/Tabs schließen und die Seite neu laden.";
+  if (/WindowSizeConfiguration/i.test(t)) return "Dieses Modell bringt ein Sliding Window mit, das in der Probe nicht vorgesehen ist. Bitte ein anderes Modell wählen.";
   if (/ContextWindowSizeExceeded|exceed context window/i.test(t)) return "Der Text war für das Kontextfenster zu lang.";
   if (/Failed to fetch|NetworkError|network/i.test(t)) return "Netzwerkproblem beim Laden (Internet beim ersten Laden nötig; Firmen- oder Schulnetz kann Downloads sperren).";
   if (/shader-f16|f16/i.test(t)) return "Die Grafik unterstützt die „f16“-Variante nicht. Die Ersatz-Variante ohne f16 wählen.";
@@ -447,8 +489,12 @@ function setStatus(el, cls, text) {
   out.push(["", `• Arbeitsspeicher laut Browser: ${navigator.deviceMemory ? "mindestens " + navigator.deviceMemory + " GB (Browser nennt höchstens 8)" : "unbekannt"}`]);
   const box = $("envStatus"); box.textContent = "";
   for (const [cls, t] of out) { const d = document.createElement("div"); d.className = cls; d.textContent = t; box.appendChild(d); }
-  for (const o of $("fModel").options) if (!state.f16 && o.value.includes("q4f16")) o.disabled = true;
-  if (!state.f16 && $("fModel").selectedOptions[0]?.disabled) $("fModel").value = "Qwen3-4B-q4f32_1-MLC";
+  if (state.gpuOk && !state.f16) {
+    for (const o of $("fModel").options) o.disabled = true;
+    out.push(["bad", "✘ Alle Modelle dieser Probe brauchen „f16“. Auf diesem Gerät ist die Probe nicht möglich."]);
+    state.gpuOk = false;
+    const box2 = $("envStatus"); const d = document.createElement("div"); d.className = "bad"; d.textContent = out[out.length - 1][1]; box2.appendChild(d);
+  }
   modelHint(); refreshButtons();
 })();
 
@@ -510,19 +556,20 @@ showRules();
 function modelHint() {
   const id = $("fModel").value;
   const h = $("modelHint");
-  if (BIG_MODELS.has(id)) setStatus(h, "warn", "⚠ Großes Modell: braucht ca. 5 GB Grafikspeicher. Auf Laptop-Grafik kann das Laden scheitern („Gerät verloren“) oder der Rechner sehr langsam werden. Vorher andere Programme und Tabs schließen.");
-  else if (id.includes("q4f32")) setStatus(h, "", "Ersatz-Variante: braucht mehr Speicher, läuft aber auch ohne „f16“.");
+  if (BIG_MODELS.has(id)) setStatus(h, "warn", "⚠ Größtes Modell (3,4 GB Grafikspeicher). Auf dem ersten Laptop führte es zu Grafik-Abstürzen („Gerät verloren“). Vorher andere Programme und Tabs schließen.");
+  else if (SLIDING_WINDOW_MODELS[id]) setStatus(h, "warn", `Hinweis: Dieses Modell arbeitet mit einem gleitenden Fenster von ${SLIDING_WINDOW_MODELS[id]} Tokens. Es sieht nur die letzten ${SLIDING_WINDOW_MODELS[id]} Tokens – für eine Niederschrift zu wenig. Laden und Mini-Test gehen, „Erstellen“ meldet dann, dass der Platz nicht reicht.`);
   else setStatus(h, "", "");
 }
 $("fModel").onchange = modelHint;
 
 function lookupModel(id) {
   const list = (state.webllm.prebuiltAppConfig && state.webllm.prebuiltAppConfig.model_list) || [];
-  const rec = list.find((m) => m.model_id === id);
-  if (!rec) throw new Error(`Modell-ID „${id}“ steht nicht in der Modellliste der Bibliothek.`);
-  const ctx = rec.overrides && rec.overrides.context_window_size;
-  if (!ctx) throw new Error(`Für „${id}“ steht keine Kontextlänge in der Konfiguration.`);
-  return { id, contextTokens: ctx, vramMB: rec.vram_required_MB, isQwen3: /^Qwen3-/.test(id) };
+  const raw = list.find((m) => m.model_id === id);
+  if (!raw) throw new Error(`Modell-ID „${id}“ steht nicht in der Modellliste der Bibliothek.`);
+  const rec = fixWindowOverrides(raw);
+  const eff = effectiveContext(rec);
+  if (!eff.tokens) throw new Error(`Für „${id}“ steht keine Kontextlänge in der Konfiguration.`);
+  return { id, contextTokens: eff.tokens, sliding: eff.sliding, vramMB: rec.vram_required_MB, isQwen3: /^Qwen3-/.test(id) };
 }
 
 $("btnLoad").onclick = async () => {
@@ -530,8 +577,8 @@ $("btnLoad").onclick = async () => {
   const id = $("fModel").value;
   const status = $("loadStatus"), bar = $("loadBar");
   if (!state.gpuOk) { setStatus(status, "bad", "✘ Kein WebGPU – Laden nicht möglich (siehe Gerätecheck)."); return; }
-  if (BIG_MODELS.has(id) && !confirm("Großes Modell (ca. 5 GB Grafikspeicher). Das kann auf diesem Gerät scheitern oder den Rechner stark auslasten. Trotzdem laden?")) return;
-  state.busy = true; refreshButtons();
+  if (BIG_MODELS.has(id) && !confirm("Qwen3 4B braucht 3,4 GB Grafikspeicher und führte auf dem ersten Laptop zu Grafik-Abstürzen. Trotzdem laden?")) return;
+  state.busy = true; state.loading = true; state.autoReloadUsed = false; state.lostPending = false; refreshButtons();
   bar.style.width = "0%";
   const t0 = performance.now();
   try {
@@ -556,25 +603,88 @@ $("btnLoad").onclick = async () => {
       }
     };
     state.engine = null; state.modelId = null; state.modelCfg = null;
-    if (state.engineObj) {
-      state.engineObj.setInitProgressCallback(progress);
-      await state.engineObj.reload(id);
-    } else {
-      state.engineObj = await state.webllm.CreateMLCEngine(id, { initProgressCallback: progress });
-    }
-    state.engine = state.engineObj; state.modelId = id; state.modelCfg = cfg;
+    state.modelId = id; state.modelCfg = cfg;
+    await loadEngine(id, progress);
     state.loadSecs = (performance.now() - t0) / 1000;
     state.loadedMB = lastMB;
     bar.style.width = "100%";
-    setStatus(status, "ok", `✔ Modell „${id}“ bereit. Ladezeit ${fmtSecs(state.loadSecs)}, ${lastMB} MB. Kontextlänge laut Konfiguration: ${cfg.contextTokens} Tokens.`);
+    const ctxText = cfg.sliding
+      ? `Gleitendes Fenster: ${cfg.contextTokens} Tokens (context_window_size auf -1 gesetzt). Das Modell sieht nur die letzten ${cfg.contextTokens} Tokens.`
+      : `Kontextlänge laut Konfiguration: ${cfg.contextTokens} Tokens.`;
+    setStatus(status, cfg.sliding ? "warn" : "ok", `✔ Modell „${id}“ bereit. Ladezeit ${fmtSecs(state.loadSecs)}, ${lastMB} MB. ${ctxText}`);
   } catch (e) {
     const x = explain(e);
-    if (/DeviceLost|device was lost/i.test(errText(e))) state.engineObj = null;
+    state.engine = null;
+    if (isEngineLost(errText(e))) state.engineObj = null;
     setStatus(status, "bad", `✘ Fehler beim Laden: ${errText(e)}${x ? "\n" + x : ""}`);
   } finally {
-    state.busy = false; refreshButtons();
+    state.busy = false; state.loading = false; refreshButtons();
   }
 };
+
+// Modell laden: neue Engine mit korrigierter Modellliste oder reload() auf der bestehenden
+async function loadEngine(id, progress) {
+  state.engine = null;
+  if (state.engineObj) {
+    if (progress) state.engineObj.setInitProgressCallback(progress);
+    await state.engineObj.reload(id);
+  } else {
+    state.appConfig = state.appConfig || buildAppConfig(state.webllm.prebuiltAppConfig);
+    state.engineObj = await state.webllm.CreateMLCEngine(id, { appConfig: state.appConfig, initProgressCallback: progress });
+  }
+  state.engine = state.engineObj;
+}
+
+// Mini-Test: 1 Token erzeugen. Zeigt sofort, ob das Modell noch geladen und die Grafik noch da ist.
+async function miniTest() {
+  const req = { messages: [{ role: "user", content: "Antworte nur mit: OK" }], temperature: TEMPERATURE, seed: SEED, max_tokens: 1 };
+  if (state.modelCfg && state.modelCfg.isQwen3) req.extra_body = { enable_thinking: false };
+  const t0 = performance.now();
+  await state.engine.chat.completions.create(req);
+  return (performance.now() - t0) / 1000;
+}
+
+// Geräteverlust: Modell gilt als entladen, „Erstellen“ wird gesperrt.
+function onEngineLost(text) {
+  state.lastLost = String(text).slice(0, 300);
+  if (state.loading) return; // beim Laden meldet reload() den Fehler selbst
+  state.engine = null;
+  setStatus($("loadStatus"), "bad", `✘ Gerät verloren – Modell wurde entladen.\nMeldung der Bibliothek: ${state.lastLost}`);
+  refreshButtons();
+  if (state.running) { state.lostPending = true; return; } // nach Ende des Laufs einmal neu laden
+  // Erst warten: Die Bibliothek ruft direkt nach der Meldung selbst unload() auf (Z. 13108).
+  // Ein sofortiges reload() liefe parallel dazu und würde das neu geladene Modell wieder freigeben.
+  clearTimeout(state.reloadTimer);
+  state.reloadTimer = setTimeout(() => { if (!state.engine && !state.loading && !state.running) autoReload(); }, AUTO_RELOAD_DELAY_MS);
+}
+
+const AUTO_RELOAD_DELAY_MS = 2000;
+
+// Genau EIN automatischer Neuladeversuch pro manuellem Laden. Danach nur noch eine klare Meldung.
+async function autoReload() {
+  if (state.autoReloadUsed || !state.modelId) {
+    setStatus($("loadStatus"), "bad", `✘ Gerät verloren – Modell wurde entladen. Ein automatisches Neuladen wurde bereits versucht.\nBitte die Seite neu laden oder ein kleineres Modell wählen.${state.lastLost ? "\nLetzte Meldung: " + state.lastLost : ""}`);
+    refreshButtons();
+    return false;
+  }
+  state.autoReloadUsed = true; state.lostPending = false;
+  state.busy = true; state.loading = true; refreshButtons();
+  setStatus($("loadStatus"), "warn", "Gerät verloren – Modell wurde entladen. Lade es einmal automatisch neu …");
+  try {
+    await loadEngine(state.modelId, null);
+    state.loading = false;
+    const secs = await miniTest();
+    setStatus($("loadStatus"), "warn", `✔ Modell „${state.modelId}“ nach Geräteverlust einmal automatisch neu geladen (Mini-Test ${fmtSecs(secs)}). Tritt der Fehler wieder auf, wird nicht noch einmal neu geladen.`);
+    return true;
+  } catch (e) {
+    state.engine = null;
+    if (isEngineLost(errText(e))) state.engineObj = null;
+    setStatus($("loadStatus"), "bad", `✘ Automatisches Neuladen gescheitert: ${errText(e)}\nBitte die Seite neu laden oder ein kleineres Modell wählen.`);
+    return false;
+  } finally {
+    state.busy = false; state.loading = false; refreshButtons();
+  }
+}
 
 function refreshButtons() {
   $("btnLoad").disabled = state.busy || !state.gpuOk;
@@ -665,6 +775,20 @@ $("btnRun").onclick = async () => {
   state.busy = true; state.running = true; state.cancel = false; refreshButtons(); keepAwake(true);
   $("result").value = "";
   try {
+    // 0) Mini-Test (1 Token): Ist das Modell noch geladen?
+    setRun(0, "Mini-Test (1 Token) …");
+    try {
+      M.miniTestSecs = await miniTest();
+    } catch (e) {
+      if (!isEngineLost(errText(e))) throw e;
+      M.warnings.push(`Mini-Test gescheitert: ${errText(e).split("\n")[0]}`);
+      state.running = false; state.busy = false;
+      const ok = await autoReload();
+      state.busy = true; state.running = true; refreshButtons();
+      if (!ok || !state.engine) throw new Error("Modell nicht verfügbar (Gerät verloren). Automatisches Neuladen hat nicht geholfen oder war schon verbraucht.");
+      M.warnings.push("Modell nach gescheitertem Mini-Test einmal automatisch neu geladen.");
+      M.miniTestSecs = await miniTest();
+    }
     // a) Blöcke
     const fixed = estimateTokens(notesPrompt(meta, ""));
     const maxWords = blockWordLimit({ contextTokens: ctx, fixedTokens: fixed, answerTokens: NOTES_ANSWER_TOKENS });
@@ -731,8 +855,9 @@ $("btnRun").onclick = async () => {
     } else {
       M.status = "Fehler";
       M.error = errText(e);
-      const x = explain(e);
-      if (/DeviceLost|device was lost/i.test(M.error)) { state.engine = null; state.engineObj = null; }
+      let x = explain(e);
+      if (cfg.sliding && /reicht nicht/.test(M.error)) x = `Dieses Modell sieht nur die letzten ${ctx} Tokens (gleitendes Fenster). Für die Niederschrift bitte Qwen3 1.7B oder Llama 3.2 3B wählen.`;
+      if (isEngineLost(M.error)) { state.engine = null; state.lostPending = !state.autoReloadUsed; }
       setStatus($("runStatus"), "bad", `✘ Fehler: ${M.error}${x ? "\n" + x : ""}`);
     }
     M.wordsOut = countWords($("result").value);
@@ -740,6 +865,7 @@ $("btnRun").onclick = async () => {
     M.total = (performance.now() - M.t0) / 1000;
     renderMetrics(M);
     state.busy = false; state.running = false; state.cancel = false; keepAwake(false); refreshButtons();
+    if (state.lostPending) { clearTimeout(state.reloadTimer); state.reloadTimer = setTimeout(autoReload, AUTO_RELOAD_DELAY_MS); }
   }
 };
 
@@ -767,6 +893,7 @@ function renderMetrics(M) {
     `Gesamtdauer: ${fmtSecs(total)}`,
     `Tokens pro Sekunde (Ausgabe): Mittel ${n(tps.length ? tps.reduce((a, b) => a + b, 0) / tps.length : null)}, gesamt ${n(genSecs ? outTok / genSecs : null)} (inkl. Einlesen)`,
     `Temperatur: ${TEMPERATURE}, Startwert: ${SEED}`,
+    `Mini-Test vor dem Lauf: ${M.miniTestSecs != null ? fmtSecs(M.miniTestSecs) : "–"}`,
   ];
   if (M.error) l.push(`Fehler (wörtlich): ${M.error}`);
   if (M.warnings.length) l.push("", "Hinweise:", ...M.warnings.map((w) => "• " + w));
