@@ -1,0 +1,922 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Niederschrift-Probe</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --mut:#5b6672; --line:#d9dee4; --acc:#0b5cab; --ok:#1a7f37; --bad:#b00020; --warn:#8a5a00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171a; --card:#1d2227; --ink:#e8ecef; --mut:#9aa6b2; --line:#323a42; --acc:#5aa9f0; --ok:#4cc26a; --bad:#ff6b81; --warn:#f0b54a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, -apple-system, "Segoe UI", Arial, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 8px 0 2px; }
+  .sub { color: var(--mut); margin: 0 0 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 12px 0; }
+  .card h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  label { display:block; font-size:.9rem; color:var(--mut); margin: 8px 0 3px; }
+  input[type=text], input[type=date], select, textarea { width:100%; padding:9px 10px; font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; }
+  textarea { resize: vertical; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  .row > * { flex:1 1 200px; }
+  button { font:inherit; padding:10px 16px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button.stop { background:var(--bad); border-color:var(--bad); color:#fff; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .btns { display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+  .status { font-size:.92rem; color:var(--mut); margin-top:8px; white-space:pre-wrap; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+  .bar { height:10px; background:var(--line); border-radius:6px; overflow:hidden; margin-top:8px; }
+  .bar > div { height:100%; width:0; background:var(--acc); transition:width .2s; }
+  .notice { position:sticky; top:0; z-index:5; background:var(--bad); color:#fff; text-align:center; font-weight:600; padding:6px 10px; }
+  pre { white-space:pre-wrap; word-break:break-word; font:13px/1.45 ui-monospace, Consolas, monospace; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:8px 0 0; max-height:320px; overflow:auto; }
+  details summary { cursor:pointer; color:var(--acc); }
+  small { color:var(--mut); }
+  #result { min-height: 320px; }
+</style>
+</head>
+<body>
+<div class="notice" role="note">Nur Probe. Ergebnis immer gegenlesen.</div>
+<main>
+  <h1>Niederschrift-Probe <small>Testversion</small></h1>
+  <p class="sub">Prüft, ob ein Sprachmodell im Browser aus einem Volltranskript eine Niederschrift schreiben kann. Texte bleiben auf diesem Gerät: Sie werden nicht gespeichert und nicht gesendet. Aus dem Internet geladen werden nur der Programmbaustein und das Modell.</p>
+
+  <div class="card">
+    <h2>0 · Gerätecheck</h2>
+    <div class="status" id="envStatus">Prüfe …</div>
+  </div>
+
+  <div class="card">
+    <h2>1 · Transkript und Angaben</h2>
+    <label for="fText">Volltranskript (Zeilen wie „[00:01:23] Text“; Kopfzeilen davor werden ignoriert)</label>
+    <textarea id="fText" rows="10" spellcheck="false" placeholder="[00:00:05] Guten Tag, wir beginnen mit der Sitzung …"></textarea>
+    <div class="btns">
+      <button id="btnFile">Textdatei (.txt) laden …</button>
+      <button id="btnClear">Alles leeren</button>
+      <input type="file" id="fFile" accept=".txt,text/plain" hidden>
+    </div>
+    <div class="status" id="parseStatus">Noch kein Text.</div>
+
+    <label for="fTitle">Anlass / Titel</label>
+    <input type="text" id="fTitle" placeholder="z. B. Sitzung der Fachschaft">
+    <div class="row">
+      <div><label for="fDate">Datum</label><input type="date" id="fDate"></div>
+      <div><label for="fOrgan">Wer beschließt? (für Sätze wie „Die Fachschaft beschließt …“)</label><input type="text" id="fOrgan" value="Die Fachschaft"></div>
+    </div>
+    <label for="fPart">Teilnehmende (mit Komma getrennt, gern mit Anrede, z. B. „Herr Meier, Frau Schulz“)</label>
+    <textarea id="fPart" rows="2"></textarea>
+    <label for="fAgenda">Tagesordnung (optional, ein Punkt pro Zeile)</label>
+    <textarea id="fAgenda" rows="4" placeholder="Begrüßung&#10;Haushalt 2026&#10;Verschiedenes"></textarea>
+    <label for="fRepeat">Lasttest: Text n-mal wiederholen (nur zur Zeitmessung)</label>
+    <select id="fRepeat">
+      <option value="1" selected>1 (normal)</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option>
+    </select>
+  </div>
+
+  <div class="card">
+    <h2>2 · Sprachmodell laden</h2>
+    <label for="fModel">Modell</label>
+    <select id="fModel">
+      <option value="gemma3-1b-it-q4f16_1-MLC">Gemma 3 1B – Download ca. 0,7 GB*, Grafikspeicher 0,7 GB</option>
+      <option value="Qwen3-1.7B-q4f16_1-MLC" selected>Qwen3 1.7B – Download ca. 1,0 GB*, Grafikspeicher 2,0 GB</option>
+      <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama 3.2 3B – Download ca. 1,8 GB*, Grafikspeicher 2,3 GB</option>
+      <option value="Qwen3-4B-q4f16_1-MLC">⚠ Qwen3 4B (nur mit Warnung) – Download ca. 2,3 GB*, Grafikspeicher 3,4 GB</option>
+    </select>
+    <div class="status" id="modelHint"></div>
+    <div class="btns"><button class="primary" id="btnLoad">Modell laden</button></div>
+    <div class="bar"><div id="loadBar"></div></div>
+    <div class="status" id="loadStatus">Noch nicht geladen. Beim ersten Mal braucht es Internet; danach liegt das Modell im Browser-Speicher dieses Geräts.
+* Downloadgröße geschätzt (nicht prüfbar); die echte Größe steht beim Laden hier. Grafikspeicher laut Konfiguration von WebLLM 0.2.85.</div>
+  </div>
+
+  <div class="card">
+    <h2>3 · Niederschrift erstellen</h2>
+    <div class="btns">
+      <button class="primary" id="btnRun" disabled>Niederschrift erstellen</button>
+      <button class="stop" id="btnCancel" disabled>Abbrechen</button>
+    </div>
+    <div class="bar"><div id="runBar"></div></div>
+    <div class="status" id="runStatus">Erst Text eingeben und ein Modell laden.</div>
+    <details>
+      <summary>Laufende Ausgabe des Modells ansehen</summary>
+      <pre id="live"></pre>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>Regeln und Anweisungen für das Modell</h2>
+    <details>
+      <summary>Anzeigen (so werden sie an das Modell geschickt)</summary>
+      <p class="status">Temperatur fest <span id="tempInfo"></span>, Zufallsstartwert fest <span id="seedInfo"></span>. Platzhalter in {geschweiften Klammern} werden beim Lauf ersetzt.</p>
+      <pre id="rulesText"></pre>
+      <div class="btns"><button id="btnCopyRules">Kopieren</button></div>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>4 · Ergebnis <small>(bearbeitbar)</small></h2>
+    <textarea id="result" spellcheck="true" placeholder="Hier erscheint die Niederschrift."></textarea>
+    <div class="btns"><button id="btnCopy">Kopieren</button></div>
+    <h2 style="margin-top:16px">Messwerte</h2>
+    <pre id="metrics">Noch keine Messung.</pre>
+    <div class="btns"><button id="btnCopyMetrics">Messwerte kopieren</button></div>
+  </div>
+</main>
+
+<script type="module">
+// ==== REINE FUNKTIONEN START (ohne Browser testbar) ====
+const TS_RE = /^\s*\[(\d{1,3}):([0-5]\d):([0-5]\d)\]\s?(.*)$/;
+const TOKENS_PER_WORD = 2.0; // vorsichtige Schätzung für deutschen Text
+const TEMPERATURE = 0.2;
+const SEED = 42;
+const MAX_BLOCK_WORDS = 1200;
+const NOTES_ANSWER_TOKENS = 700;
+const MERGE_ANSWER_TOKENS = 900;
+const THEMES_ANSWER_TOKENS = 200;
+const SECTION_ANSWER_TOKENS = 800;
+const TEMPLATE_TOKENS = 100; // Rahmen des Chat-Formats
+const SAFETY_TOKENS = 200;
+
+const pad2 = (n) => String(n).padStart(2, "0");
+
+function countWords(s) {
+  return (String(s || "").match(/\S+/g) || []).length;
+}
+
+function estimateTokens(text) {
+  return Math.ceil(countWords(text) * TOKENS_PER_WORD);
+}
+
+// Volltranskript lesen: Zeilen "[hh:mm:ss] Text". Zeilen vor dem ersten Zeitstempel sind Kopfzeilen.
+// Zeilen ohne Zeitstempel danach gehören zur vorigen Zeile.
+function parseTranscript(raw) {
+  const lines = String(raw ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const entries = [];
+  let headerLines = 0, continuationLines = 0, emptyTimestampLines = 0, seenTs = false;
+  for (const line of lines) {
+    const m = line.match(TS_RE);
+    if (m) {
+      seenTs = true;
+      const text = m[4].trim();
+      if (!text) emptyTimestampLines++;
+      entries.push({ time: `${pad2(+m[1])}:${m[2]}:${m[3]}`, sec: +m[1] * 3600 + +m[2] * 60 + +m[3], text });
+    } else if (!line.trim()) {
+      continue;
+    } else if (!seenTs) {
+      headerLines++;
+    } else {
+      continuationLines++;
+      const last = entries[entries.length - 1];
+      last.text = last.text ? `${last.text} ${line.trim()}` : line.trim();
+    }
+  }
+  let result = entries.filter((e) => e.text);
+  let noTimestamps = false;
+  if (!seenTs && headerLines > 0) {
+    // Kein einziger Zeitstempel: ganzen Text als Fließtext nehmen (wird auf der Seite als Warnung angezeigt)
+    noTimestamps = true;
+    result = lines.filter((l) => l.trim()).map((l) => ({ time: null, sec: null, text: l.trim() }));
+    headerLines = 0;
+  }
+  return { entries: result, headerLines, continuationLines, emptyTimestampLines, noTimestamps };
+}
+
+function repeatEntries(entries, n) {
+  const k = Math.min(6, Math.max(1, Math.floor(Number(n) || 1)));
+  const out = [];
+  for (let i = 0; i < k; i++) out.push(...entries);
+  return out;
+}
+
+// Wie viele Wörter passen in einen Block, damit Anweisung, Block und Antwort ins Kontextfenster passen?
+function blockWordLimit({ contextTokens, fixedTokens, answerTokens, cap = MAX_BLOCK_WORDS, min = 100 }) {
+  const free = contextTokens - fixedTokens - answerTokens - TEMPLATE_TOKENS - SAFETY_TOKENS;
+  const words = Math.floor(free / TOKENS_PER_WORD);
+  if (!(words >= min)) throw new Error(`Kontextlänge ${contextTokens} reicht nicht: nach Anweisung und Antwort bleiben nur ca. ${Math.max(0, words)} Wörter je Block.`);
+  return Math.min(cap, words);
+}
+
+// Teilt die Zeilen in Blöcke von höchstens maxWords Wörtern, an Zeilengrenzen.
+// Nur eine einzelne überlange Zeile wird an Wortgrenzen geteilt.
+function splitBlocks(entries, maxWords) {
+  if (!(maxWords >= 1)) throw new Error("maxWords muss mindestens 1 sein");
+  const blocks = [];
+  let cur = [], curWords = 0, oversizedLines = 0;
+  const flush = () => {
+    if (!cur.length) return;
+    blocks.push({ text: cur.map((e) => e.text).join("\n"), words: curWords, from: cur[0].time, to: cur[cur.length - 1].time, lines: cur.length });
+    cur = []; curWords = 0;
+  };
+  for (const e of entries) {
+    const w = countWords(e.text);
+    if (!w) continue;
+    if (w > maxWords) {
+      flush();
+      oversizedLines++;
+      const words = e.text.split(/\s+/).filter(Boolean);
+      for (let i = 0; i < words.length; i += maxWords) {
+        const part = words.slice(i, i + maxWords);
+        blocks.push({ text: part.join(" "), words: part.length, from: e.time, to: e.time, lines: 1 });
+      }
+      continue;
+    }
+    if (curWords + w > maxWords) flush();
+    cur.push(e); curWords += w;
+  }
+  flush();
+  return { blocks, oversizedLines };
+}
+
+// Fasst Texte der Reihe nach zu Gruppen zusammen, deren geschätzte Länge maxTokens nicht übersteigt.
+function packTexts(texts, maxTokens) {
+  const groups = [];
+  let cur = [], curTok = 0;
+  for (const t of texts) {
+    const tok = estimateTokens(t);
+    if (cur.length && curTok + tok > maxTokens) { groups.push(cur); cur = []; curTok = 0; }
+    cur.push(t); curTok += tok;
+  }
+  if (cur.length) groups.push(cur);
+  return groups;
+}
+
+// Denkblöcke (<think>…</think>) entfernen, auch einen nicht geschlossenen.
+function stripThink(s) {
+  let removed = 0;
+  let out = String(s || "").replace(/<think>[\s\S]*?<\/think>/g, () => { removed++; return ""; });
+  if (/<think>/.test(out)) { removed++; out = out.replace(/<think>[\s\S]*$/, ""); }
+  return { text: out.trim(), removed };
+}
+
+function parseParticipants(s) {
+  return String(s || "").split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
+}
+
+function parseAgenda(s) {
+  return String(s || "").split(/\r?\n/).map((l) => l.trim())
+    .map((l) => l.replace(/^(?:TOP\s*)?\d+\s*[.):-]?\s*/i, "").replace(/^[-*•]\s*/, "").trim())
+    .filter(Boolean).map((title, i) => ({ n: i + 1, title }));
+}
+
+// Themenliste aus einer Modellantwort lesen (nummeriert oder mit Spiegelstrichen)
+function parseThemeList(s, max = 8) {
+  const lines = String(s || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  let items = lines.map((l) => l.match(/^(?:\d+\s*[.)]|[-*•])\s+(.+)$/)).filter(Boolean).map((m) => m[1]);
+  if (!items.length) items = lines;
+  return items.map((t) => t.replace(/\*\*/g, "").replace(/[:.]$/, "").trim()).filter(Boolean).slice(0, max);
+}
+
+// Entfernt eine vom Modell trotzdem geschriebene Überschrift (die Seite setzt sie selbst).
+function dropRepeatedHeading(text, title) {
+  const lines = String(text || "").split("\n");
+  const first = (lines[0] || "").replace(/[#*]/g, "").trim().toLowerCase();
+  const t = String(title || "").toLowerCase();
+  if (first && (/^(top|thema)\s*\d+/.test(first) || /^\d+[.)]\s/.test(first) || (t && first.includes(t) && first.length < t.length + 20))) {
+    return lines.slice(1).join("\n").trim();
+  }
+  return String(text || "").trim();
+}
+
+function fmtSecs(s) {
+  if (!isFinite(s)) return "–";
+  if (s < 60) return `${s.toFixed(1).replace(".", ",")} s`;
+  const m = Math.floor(s / 60), r = Math.round(s % 60);
+  return `${m}:${pad2(r)} min`;
+}
+
+function fmtDateDe(iso) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : "";
+}
+
+// ---- Anweisungstexte ----
+function rulesText(meta) {
+  const names = meta.participants.length ? meta.participants.join(", ") : "(keine Liste angegeben)";
+  return [
+    "REGELN:",
+    "1. Verwende nur Inhalte aus dem gegebenen Text. Erfinde nichts. Markiere Unklares mit [unklar].",
+    "2. Nenne einen Beschluss nur, wenn im Text ausdrücklich etwas beschlossen wurde.",
+    `3. Schreibe Namen genau so wie in der Teilnehmerliste: ${names}.`,
+    "4. Übernimm Zahlen, Daten und Fristen unverändert.",
+    "5. Schreibe sachlich im Amtsstil, in der dritten Person und im Präsens. Antworte auf Deutsch.",
+  ].join("\n");
+}
+
+function contextText(meta) {
+  const l = [];
+  if (meta.title) l.push(`Anlass: ${meta.title}`);
+  if (meta.date) l.push(`Datum: ${meta.date}`);
+  if (meta.agenda.length) l.push("Tagesordnung:\n" + meta.agenda.map((a) => `TOP ${a.n}: ${a.title}`).join("\n"));
+  return l.join("\n");
+}
+
+function notesPrompt(meta, blockText) {
+  return [
+    rulesText(meta),
+    "",
+    contextText(meta),
+    "",
+    "AUFGABE: Lies den folgenden Abschnitt eines Gesprächstranskripts und schreibe knappe Notizen dazu.",
+    "Gliederung (jeweils Spiegelstriche, „keine“ wenn nichts vorkommt):",
+    meta.agenda.length ? "Thema: (mit TOP-Nummer, wenn zuordenbar)" : "Thema:",
+    "Aussagen: (wer sagt was)",
+    "Beschlüsse:",
+    "Aufgaben: (wer, was, bis wann)",
+    "Zahlen und Termine: (genau wie im Text)",
+    "Keine Einleitung, kein Schlusssatz.",
+    "",
+    "ABSCHNITT:",
+    blockText,
+  ].join("\n");
+}
+
+function mergePrompt(meta, notesText) {
+  return [
+    rulesText(meta),
+    "",
+    contextText(meta),
+    "",
+    "AUFGABE: Führe die folgenden Notizen zu einer einzigen Notiz zusammen. Doppeltes nur einmal.",
+    "Lass nichts weg, was Beschlüsse, Aufgaben, Zahlen oder Termine betrifft. Behalte die Gliederung",
+    "Thema / Aussagen / Beschlüsse / Aufgaben / Zahlen und Termine bei. Keine Einleitung.",
+    "",
+    "NOTIZEN:",
+    notesText,
+  ].join("\n");
+}
+
+function themesPrompt(meta, notesText) {
+  return [
+    rulesText(meta),
+    "",
+    contextText(meta),
+    "",
+    "AUFGABE: Bilde aus den Notizen 2 bis 7 Themen in der Reihenfolge der Besprechung.",
+    "Antworte nur mit einer nummerierten Liste kurzer Thementitel (je höchstens 6 Wörter).",
+    "",
+    "NOTIZEN:",
+    notesText,
+  ].join("\n");
+}
+
+function sectionPrompt(meta, notesText, label, organ) {
+  return [
+    rulesText(meta),
+    "",
+    contextText(meta),
+    "",
+    `AUFGABE: Schreibe den Text der Niederschrift für ${label}.`,
+    "Verwende nur Notizen, die zu diesem Punkt gehören. Schreibe keine Überschrift.",
+    "Form: Fließtext oder Spiegelstriche.",
+    `Beschlüsse in der Form: „${organ || "Die Fachschaft"} beschließt …“.`,
+    "Zuständigkeiten in der Form: „Herr X übernimmt …“ bzw. „Frau X übernimmt …“. Verwende Herr/Frau nur, wenn die Anrede in der Teilnehmerliste oder im Text steht, sonst nur den Namen.",
+    "Steht zu diesem Punkt nichts in den Notizen, schreibe nur: „Zu diesem Punkt enthält das Transkript keine Angaben.“",
+    "Keine Einleitung, kein Schlusssatz.",
+    "",
+    "NOTIZEN:",
+    notesText,
+  ].join("\n");
+}
+
+function buildHeader(meta) {
+  const l = ["NIEDERSCHRIFT (Entwurf aus der Probe-Seite – bitte gegenlesen)"];
+  if (meta.title) l.push(`Anlass: ${meta.title}`);
+  if (meta.date) l.push(`Datum: ${meta.date}`);
+  if (meta.participants.length) l.push(`Teilnehmende: ${meta.participants.join(", ")}`);
+  if (meta.agenda.length) l.push("", "Tagesordnung:", ...meta.agenda.map((a) => `TOP ${a.n}: ${a.title}`));
+  return l.join("\n");
+}
+
+// ---- Kontextfenster (WebLLM 0.2.85) ----
+// Modelle, deren mlc-chat-config.json (Hugging Face) ein Sliding Window mitbringt, für die die Modellliste
+// von WebLLM aber nur context_window_size setzt. Beleg Gemma 3 1B: WindowSizeConfigurationError auf Easys
+// Laptop mit "context_window_size: 4096, sliding_window_size: 512". WebLLM erlaubt nur EINEN positiven Wert.
+const SLIDING_WINDOW_MODELS = { "gemma3-1b-it-q4f16_1-MLC": 512 };
+
+// Liefert den Modelleintrag mit korrigiertem Override (context_window_size -1, Sliding Window behalten).
+function fixWindowOverrides(record, known = SLIDING_WINDOW_MODELS) {
+  const sw = known[record.model_id];
+  if (!sw) return record;
+  return { ...record, overrides: { ...(record.overrides || {}), context_window_size: -1, sliding_window_size: sw } };
+}
+
+// Wie viele Tokens das Modell tatsächlich gleichzeitig sieht. Bei Sliding Window ist der Zwischenspeicher
+// (KV-Cache) nur so groß wie das Fenster – ältere Tokens fallen heraus.
+function effectiveContext(record) {
+  const o = record.overrides || {};
+  if (o.sliding_window_size > 0) return { tokens: o.sliding_window_size, sliding: true };
+  return { tokens: o.context_window_size > 0 ? o.context_window_size : 0, sliding: false };
+}
+
+function buildAppConfig(prebuilt, known = SLIDING_WINDOW_MODELS) {
+  return { ...prebuilt, model_list: prebuilt.model_list.map((m) => fixWindowOverrides(m, known)) };
+}
+
+// Fehler, nach denen das Modell nicht mehr nutzbar ist (Gerät verloren, entladen, freigegeben)
+function isEngineLost(text) {
+  return /DeviceLost|Device was lost|device lost|ModelNotLoaded|Model not loaded|already been disposed/i.test(String(text || ""));
+}
+// ==== REINE FUNKTIONEN ENDE ====
+
+// ---------- Ab hier: Browser-Teil ----------
+const WEBLLM_URL = "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.85/lib/index.js";
+const BIG_MODELS = new Set(["Qwen3-4B-q4f16_1-MLC"]);
+const $ = (id) => document.getElementById(id);
+
+const state = {
+  webllm: null, engine: null, modelId: null, modelCfg: null, loadSecs: null,
+  gpuOk: false, f16: false, busy: false, cancel: false, wakeLock: null,
+  loading: false, running: false, autoReloadUsed: false, lostPending: false, lastLost: "",
+};
+
+// Geräteverlust sichtbar machen: WebLLM 0.2.85 meldet ihn nur über die Konsole
+// (lib/index.js Z. 13107: log.error("Device was lost. …")) und entlädt dann still das Modell.
+// Der Wächter wird VOR dem Laden der Bibliothek eingerichtet, weil sie ihre Log-Ausgabe beim Start bindet.
+const origConsoleError = console.error.bind(console);
+console.error = (...args) => {
+  origConsoleError(...args);
+  try {
+    const t = args.map((a) => (a && a.message) || String(a)).join(" ");
+    if (/Device was lost/i.test(t)) onEngineLost(t);
+  } catch {}
+};
+
+$("fDate").value = (() => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; })();
+$("tempInfo").textContent = String(TEMPERATURE).replace(".", ",");
+$("seedInfo").textContent = String(SEED);
+
+function errText(e) {
+  const name = e && e.name && e.name !== "Error" ? `${e.name}: ` : "";
+  return name + String((e && e.message) || e);
+}
+function explain(e) {
+  const t = errText(e);
+  if (isEngineLost(t)) return "Gerät verloren – Modell wurde entladen (WebGPU). Meist ist der Grafikspeicher zu knapp. Ein kleineres Modell wählen oder andere Programme/Tabs schließen und die Seite neu laden.";
+  if (/WindowSizeConfiguration/i.test(t)) return "Dieses Modell bringt ein Sliding Window mit, das in der Probe nicht vorgesehen ist. Bitte ein anderes Modell wählen.";
+  if (/ContextWindowSizeExceeded|exceed context window/i.test(t)) return "Der Text war für das Kontextfenster zu lang.";
+  if (/Failed to fetch|NetworkError|network/i.test(t)) return "Netzwerkproblem beim Laden (Internet beim ersten Laden nötig; Firmen- oder Schulnetz kann Downloads sperren).";
+  if (/shader-f16|f16/i.test(t)) return "Die Grafik unterstützt die „f16“-Variante nicht. Die Ersatz-Variante ohne f16 wählen.";
+  return "";
+}
+function setStatus(el, cls, text) {
+  el.textContent = "";
+  if (cls) { const s = document.createElement("span"); s.className = cls; s.textContent = text; el.appendChild(s); }
+  else el.textContent = text;
+}
+
+// ---------- Gerätecheck ----------
+(async function envCheck() {
+  const out = [];
+  out.push([window.isSecureContext ? "ok" : "bad", window.isSecureContext ? "✔ Sichere Verbindung" : "✘ Keine sichere Verbindung: WebGPU braucht https oder localhost."]);
+  let info = "";
+  try {
+    if (navigator.gpu) {
+      const a = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+      if (a) {
+        state.gpuOk = true;
+        state.f16 = a.features.has("shader-f16");
+        const i = a.info || {};
+        info = [i.vendor, i.architecture, i.description].filter(Boolean).join(", ");
+        const maxBuf = a.limits && a.limits.maxBufferSize ? `, größter Puffer ${(a.limits.maxBufferSize / 2 ** 20).toFixed(0)} MB` : "";
+        out.push(["ok", `✔ WebGPU verfügbar${info ? ` (${info})` : ""}${maxBuf}`]);
+        out.push([state.f16 ? "ok" : "warn", state.f16 ? "✔ „f16“ wird unterstützt" : "• „f16“ wird nicht unterstützt: nur die Ersatz-Varianten ohne f16 sind wählbar"]);
+      }
+    }
+  } catch (e) { out.push(["bad", `✘ WebGPU-Fehler: ${errText(e)}`]); }
+  if (!state.gpuOk) out.push(["bad", "✘ Kein WebGPU: Die Probe läuft nur mit Grafikbeschleunigung. Ein Ersatz über den Prozessor wäre viel zu langsam und ist bewusst nicht eingebaut. Bitte aktuellen Edge oder Chrome verwenden."]);
+  out.push(["", `• Arbeitsspeicher laut Browser: ${navigator.deviceMemory ? "mindestens " + navigator.deviceMemory + " GB (Browser nennt höchstens 8)" : "unbekannt"}`]);
+  const box = $("envStatus"); box.textContent = "";
+  for (const [cls, t] of out) { const d = document.createElement("div"); d.className = cls; d.textContent = t; box.appendChild(d); }
+  if (state.gpuOk && !state.f16) {
+    for (const o of $("fModel").options) o.disabled = true;
+    out.push(["bad", "✘ Alle Modelle dieser Probe brauchen „f16“. Auf diesem Gerät ist die Probe nicht möglich."]);
+    state.gpuOk = false;
+    const box2 = $("envStatus"); const d = document.createElement("div"); d.className = "bad"; d.textContent = out[out.length - 1][1]; box2.appendChild(d);
+  }
+  modelHint(); refreshButtons();
+})();
+
+// ---------- Eingabe ----------
+let parsed = { entries: [], headerLines: 0, continuationLines: 0, emptyTimestampLines: 0, noTimestamps: false };
+function onTextChange() {
+  parsed = parseTranscript($("fText").value);
+  const st = $("parseStatus");
+  if (!$("fText").value.trim()) { setStatus(st, "", "Noch kein Text."); refreshButtons(); return; }
+  const words = parsed.entries.reduce((a, e) => a + countWords(e.text), 0);
+  const msg = [`${parsed.entries.length} Zeilen, ${words.toLocaleString("de-DE")} Wörter erkannt.`];
+  if (parsed.headerLines) msg.push(`${parsed.headerLines} Kopfzeilen ignoriert.`);
+  if (parsed.continuationLines) msg.push(`${parsed.continuationLines} Zeilen ohne Zeitstempel an die vorige Zeile angehängt.`);
+  if (parsed.emptyTimestampLines) msg.push(`${parsed.emptyTimestampLines} Zeitstempel ohne Text.`);
+  if (parsed.noTimestamps) setStatus(st, "warn", "Achtung: Keine Zeile mit Zeitstempel „[hh:mm:ss]“ gefunden. Der ganze Text wird als Fließtext verwendet.\n" + msg.join(" "));
+  else if (!parsed.entries.length) setStatus(st, "bad", "Kein verwertbarer Text gefunden.");
+  else setStatus(st, "ok", msg.join(" "));
+  refreshButtons();
+}
+$("fText").addEventListener("input", onTextChange);
+$("btnFile").onclick = () => $("fFile").click();
+$("fFile").onchange = async (ev) => {
+  const f = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!f) return;
+  try { $("fText").value = await f.text(); onTextChange(); }
+  catch (e) { setStatus($("parseStatus"), "bad", `✘ Datei konnte nicht gelesen werden: ${errText(e)}`); }
+};
+$("btnClear").onclick = () => {
+  if (state.busy) return;
+  for (const id of ["fText", "fTitle", "fPart", "fAgenda", "result"]) $(id).value = "";
+  $("fRepeat").value = "1"; $("live").textContent = ""; $("metrics").textContent = "Noch keine Messung.";
+  onTextChange();
+};
+
+function readMeta() {
+  return {
+    title: $("fTitle").value.trim(),
+    date: fmtDateDe($("fDate").value),
+    participants: parseParticipants($("fPart").value),
+    agenda: parseAgenda($("fAgenda").value),
+    organ: $("fOrgan").value.trim() || "Die Fachschaft",
+  };
+}
+
+function showRules() {
+  const meta = { title: "{Anlass}", date: "{Datum}", participants: ["{Teilnehmerliste}"], agenda: [{ n: 1, title: "{Tagesordnung, falls angegeben}" }] };
+  $("rulesText").textContent = [
+    "Jede Anfrage geht als eine Nachricht an das Modell. Temperatur " + TEMPERATURE + ", Startwert " + SEED + ".",
+    "", "===== Stufe 1: Notizen je Block =====", notesPrompt(meta, "{Text des Blocks, ohne Zeitstempel}"),
+    "", "===== Stufe 2 (nur wenn die Notizen zu lang sind): Zusammenführen =====", mergePrompt(meta, "{Notizen, durch --- getrennt}"),
+    "", "===== Stufe 3a (nur ohne Tagesordnung): Themen bilden =====", themesPrompt(meta, "{alle Notizen}"),
+    "", "===== Stufe 3b: Abschnitt je Tagesordnungspunkt bzw. Thema =====", sectionPrompt(meta, "{alle Notizen}", "TOP {n}: {Titel}", "{Wer beschließt}"),
+  ].join("\n");
+}
+showRules();
+
+// ---------- Modell ----------
+function modelHint() {
+  const id = $("fModel").value;
+  const h = $("modelHint");
+  if (BIG_MODELS.has(id)) setStatus(h, "warn", "⚠ Größtes Modell (3,4 GB Grafikspeicher). Auf dem ersten Laptop führte es zu Grafik-Abstürzen („Gerät verloren“). Vorher andere Programme und Tabs schließen.");
+  else if (SLIDING_WINDOW_MODELS[id]) setStatus(h, "warn", `Hinweis: Dieses Modell arbeitet mit einem gleitenden Fenster von ${SLIDING_WINDOW_MODELS[id]} Tokens. Es sieht nur die letzten ${SLIDING_WINDOW_MODELS[id]} Tokens – für eine Niederschrift zu wenig. Laden und Mini-Test gehen, „Erstellen“ meldet dann, dass der Platz nicht reicht.`);
+  else setStatus(h, "", "");
+}
+$("fModel").onchange = modelHint;
+
+function lookupModel(id) {
+  const list = (state.webllm.prebuiltAppConfig && state.webllm.prebuiltAppConfig.model_list) || [];
+  const raw = list.find((m) => m.model_id === id);
+  if (!raw) throw new Error(`Modell-ID „${id}“ steht nicht in der Modellliste der Bibliothek.`);
+  const rec = fixWindowOverrides(raw);
+  const eff = effectiveContext(rec);
+  if (!eff.tokens) throw new Error(`Für „${id}“ steht keine Kontextlänge in der Konfiguration.`);
+  return { id, contextTokens: eff.tokens, sliding: eff.sliding, vramMB: rec.vram_required_MB, isQwen3: /^Qwen3-/.test(id) };
+}
+
+$("btnLoad").onclick = async () => {
+  if (state.busy) return;
+  const id = $("fModel").value;
+  const status = $("loadStatus"), bar = $("loadBar");
+  if (!state.gpuOk) { setStatus(status, "bad", "✘ Kein WebGPU – Laden nicht möglich (siehe Gerätecheck)."); return; }
+  if (BIG_MODELS.has(id) && !confirm("Qwen3 4B braucht 3,4 GB Grafikspeicher und führte auf dem ersten Laptop zu Grafik-Abstürzen. Trotzdem laden?")) return;
+  state.busy = true; state.loading = true; state.autoReloadUsed = false; state.lostPending = false; refreshButtons();
+  bar.style.width = "0%";
+  const t0 = performance.now();
+  try {
+    setStatus(status, "", "Lade Programmbaustein …");
+    if (!state.webllm) {
+      try { state.webllm = await import(WEBLLM_URL); }
+      catch (e) { throw new Error(`Programmbaustein WebLLM konnte nicht geladen werden (${errText(e)}). Ist das Internet erreichbar?`); }
+    }
+    const cfg = lookupModel(id);
+    let lastMB = 0;
+    const progress = (r) => {
+      const m = /(\d+)MB (fetched|loaded)/.exec(r.text || "");
+      const p = typeof r.progress === "number" ? r.progress : 0;
+      bar.style.width = (100 * p).toFixed(0) + "%";
+      if (m) {
+        lastMB = +m[1];
+        const total = p > 0.01 ? Math.round(lastMB / p) : null;
+        const verb = m[2] === "fetched" ? "Lade Modell aus dem Internet" : "Lade Modell aus dem Browser-Speicher";
+        setStatus(status, "", `${verb}: ${lastMB} MB${total ? " von ca. " + total + " MB" : ""} (${Math.floor(100 * p)} %)`);
+      } else if (r.text) {
+        setStatus(status, "", `Modell wird vorbereitet … (${r.text.slice(0, 120)})`);
+      }
+    };
+    state.engine = null; state.modelId = null; state.modelCfg = null;
+    state.modelId = id; state.modelCfg = cfg;
+    await loadEngine(id, progress);
+    state.loadSecs = (performance.now() - t0) / 1000;
+    state.loadedMB = lastMB;
+    bar.style.width = "100%";
+    const ctxText = cfg.sliding
+      ? `Gleitendes Fenster: ${cfg.contextTokens} Tokens (context_window_size auf -1 gesetzt). Das Modell sieht nur die letzten ${cfg.contextTokens} Tokens.`
+      : `Kontextlänge laut Konfiguration: ${cfg.contextTokens} Tokens.`;
+    setStatus(status, cfg.sliding ? "warn" : "ok", `✔ Modell „${id}“ bereit. Ladezeit ${fmtSecs(state.loadSecs)}, ${lastMB} MB. ${ctxText}`);
+  } catch (e) {
+    const x = explain(e);
+    state.engine = null;
+    if (isEngineLost(errText(e))) state.engineObj = null;
+    setStatus(status, "bad", `✘ Fehler beim Laden: ${errText(e)}${x ? "\n" + x : ""}`);
+  } finally {
+    state.busy = false; state.loading = false; refreshButtons();
+  }
+};
+
+// Modell laden: neue Engine mit korrigierter Modellliste oder reload() auf der bestehenden
+async function loadEngine(id, progress) {
+  state.engine = null;
+  if (state.engineObj) {
+    if (progress) state.engineObj.setInitProgressCallback(progress);
+    await state.engineObj.reload(id);
+  } else {
+    state.appConfig = state.appConfig || buildAppConfig(state.webllm.prebuiltAppConfig);
+    state.engineObj = await state.webllm.CreateMLCEngine(id, { appConfig: state.appConfig, initProgressCallback: progress });
+  }
+  state.engine = state.engineObj;
+}
+
+// Mini-Test: 1 Token erzeugen. Zeigt sofort, ob das Modell noch geladen und die Grafik noch da ist.
+async function miniTest() {
+  const req = { messages: [{ role: "user", content: "Antworte nur mit: OK" }], temperature: TEMPERATURE, seed: SEED, max_tokens: 1 };
+  if (state.modelCfg && state.modelCfg.isQwen3) req.extra_body = { enable_thinking: false };
+  const t0 = performance.now();
+  await state.engine.chat.completions.create(req);
+  return (performance.now() - t0) / 1000;
+}
+
+// Geräteverlust: Modell gilt als entladen, „Erstellen“ wird gesperrt.
+function onEngineLost(text) {
+  state.lastLost = String(text).slice(0, 300);
+  if (state.loading) return; // beim Laden meldet reload() den Fehler selbst
+  state.engine = null;
+  setStatus($("loadStatus"), "bad", `✘ Gerät verloren – Modell wurde entladen.\nMeldung der Bibliothek: ${state.lastLost}`);
+  refreshButtons();
+  if (state.running) { state.lostPending = true; return; } // nach Ende des Laufs einmal neu laden
+  // Erst warten: Die Bibliothek ruft direkt nach der Meldung selbst unload() auf (Z. 13108).
+  // Ein sofortiges reload() liefe parallel dazu und würde das neu geladene Modell wieder freigeben.
+  clearTimeout(state.reloadTimer);
+  state.reloadTimer = setTimeout(() => { if (!state.engine && !state.loading && !state.running) autoReload(); }, AUTO_RELOAD_DELAY_MS);
+}
+
+const AUTO_RELOAD_DELAY_MS = 2000;
+
+// Genau EIN automatischer Neuladeversuch pro manuellem Laden. Danach nur noch eine klare Meldung.
+async function autoReload() {
+  if (state.autoReloadUsed || !state.modelId) {
+    setStatus($("loadStatus"), "bad", `✘ Gerät verloren – Modell wurde entladen. Ein automatisches Neuladen wurde bereits versucht.\nBitte die Seite neu laden oder ein kleineres Modell wählen.${state.lastLost ? "\nLetzte Meldung: " + state.lastLost : ""}`);
+    refreshButtons();
+    return false;
+  }
+  state.autoReloadUsed = true; state.lostPending = false;
+  state.busy = true; state.loading = true; refreshButtons();
+  setStatus($("loadStatus"), "warn", "Gerät verloren – Modell wurde entladen. Lade es einmal automatisch neu …");
+  try {
+    await loadEngine(state.modelId, null);
+    state.loading = false;
+    const secs = await miniTest();
+    setStatus($("loadStatus"), "warn", `✔ Modell „${state.modelId}“ nach Geräteverlust einmal automatisch neu geladen (Mini-Test ${fmtSecs(secs)}). Tritt der Fehler wieder auf, wird nicht noch einmal neu geladen.`);
+    return true;
+  } catch (e) {
+    state.engine = null;
+    if (isEngineLost(errText(e))) state.engineObj = null;
+    setStatus($("loadStatus"), "bad", `✘ Automatisches Neuladen gescheitert: ${errText(e)}\nBitte die Seite neu laden oder ein kleineres Modell wählen.`);
+    return false;
+  } finally {
+    state.busy = false; state.loading = false; refreshButtons();
+  }
+}
+
+function refreshButtons() {
+  $("btnLoad").disabled = state.busy || !state.gpuOk;
+  $("btnRun").disabled = state.busy || !state.engine || !parsed.entries.length;
+  $("btnCancel").disabled = !state.busy || !state.running;
+  $("btnClear").disabled = state.busy;
+  $("btnFile").disabled = state.busy;
+}
+
+async function keepAwake(on) {
+  try {
+    if (on && navigator.wakeLock && !state.wakeLock) state.wakeLock = await navigator.wakeLock.request("screen");
+    if (!on && state.wakeLock) { await state.wakeLock.release(); state.wakeLock = null; }
+  } catch {}
+}
+
+// ---------- Ablauf ----------
+class Cancelled extends Error { constructor() { super("Abgebrochen"); this.name = "Abgebrochen"; } }
+
+async function ask(prompt, maxTokens, label, M) {
+  if (state.cancel) throw new Cancelled();
+  const req = {
+    messages: [{ role: "user", content: prompt }],
+    temperature: TEMPERATURE, seed: SEED, max_tokens: maxTokens,
+    stream: true, stream_options: { include_usage: true },
+  };
+  if (state.modelCfg.isQwen3) req.extra_body = { enable_thinking: false };
+  const live = $("live");
+  live.textContent = `— ${label} —\n`;
+  const t0 = performance.now();
+  let raw = "", usage = null, finish = null;
+  const stream = await state.engine.chat.completions.create(req);
+  for await (const ch of stream) {
+    const c = ch.choices && ch.choices[0];
+    if (c && c.delta && c.delta.content) { raw += c.delta.content; live.textContent = `— ${label} —\n` + raw.slice(-3000); }
+    if (c && c.finish_reason) finish = c.finish_reason;
+    if (ch.usage) usage = ch.usage;
+  }
+  if (state.cancel) throw new Cancelled();
+  const secs = (performance.now() - t0) / 1000;
+  const { text, removed } = stripThink(raw);
+  const rec = {
+    label, secs, finish,
+    promptTokens: usage ? usage.prompt_tokens : null,
+    outTokens: usage ? usage.completion_tokens : null,
+    decodeTps: usage && usage.extra ? usage.extra.decode_tokens_per_s : null,
+    prefillTps: usage && usage.extra ? usage.extra.prefill_tokens_per_s : null,
+    thinkRemoved: removed,
+  };
+  M.calls.push(rec);
+  renderMetrics(M);
+  return text;
+}
+
+// Notizen für einen Block; ist er trotz Schätzung zu lang, wird er geteilt und erneut versucht.
+async function notesForBlock(meta, text, label, M, depth = 0) {
+  try {
+    return [await ask(notesPrompt(meta, text), NOTES_ANSWER_TOKENS, label, M)];
+  } catch (e) {
+    if (depth < 3 && /ContextWindowSizeExceeded|exceed context window/i.test(errText(e))) {
+      M.warnings.push(`${label}: zu lang für das Kontextfenster (${errText(e).split("\n")[0]}) – in zwei Hälften geteilt.`);
+      const w = text.split(/\s+/).filter(Boolean);
+      const half = Math.ceil(w.length / 2);
+      const a = await notesForBlock(meta, w.slice(0, half).join(" "), label + "a", M, depth + 1);
+      const b = await notesForBlock(meta, w.slice(half).join(" "), label + "b", M, depth + 1);
+      return [...a, ...b];
+    }
+    throw e;
+  }
+}
+
+function setRun(pct, text) {
+  $("runBar").style.width = Math.max(0, Math.min(100, pct)).toFixed(0) + "%";
+  setStatus($("runStatus"), "", text);
+}
+
+$("btnRun").onclick = async () => {
+  if (state.busy || !state.engine) return;
+  const meta = readMeta();
+  const cfg = state.modelCfg;
+  const ctx = cfg.contextTokens;
+  const entries = repeatEntries(parsed.entries, $("fRepeat").value);
+  const M = {
+    model: state.modelId, loadSecs: state.loadSecs, loadedMB: state.loadedMB, ctx, repeat: Number($("fRepeat").value),
+    wordsIn: entries.reduce((a, e) => a + countWords(e.text), 0), wordsOut: 0,
+    blockWords: 0, blocks: 0, calls: [], warnings: [], t0: performance.now(), total: null, status: "läuft",
+  };
+  state.busy = true; state.running = true; state.cancel = false; refreshButtons(); keepAwake(true);
+  $("result").value = "";
+  try {
+    // 0) Mini-Test (1 Token): Ist das Modell noch geladen?
+    setRun(0, "Mini-Test (1 Token) …");
+    try {
+      M.miniTestSecs = await miniTest();
+    } catch (e) {
+      if (!isEngineLost(errText(e))) throw e;
+      M.warnings.push(`Mini-Test gescheitert: ${errText(e).split("\n")[0]}`);
+      state.running = false; state.busy = false;
+      const ok = await autoReload();
+      state.busy = true; state.running = true; refreshButtons();
+      if (!ok || !state.engine) throw new Error("Modell nicht verfügbar (Gerät verloren). Automatisches Neuladen hat nicht geholfen oder war schon verbraucht.");
+      M.warnings.push("Modell nach gescheitertem Mini-Test einmal automatisch neu geladen.");
+      M.miniTestSecs = await miniTest();
+    }
+    // a) Blöcke
+    const fixed = estimateTokens(notesPrompt(meta, ""));
+    const maxWords = blockWordLimit({ contextTokens: ctx, fixedTokens: fixed, answerTokens: NOTES_ANSWER_TOKENS });
+    const { blocks, oversizedLines } = splitBlocks(entries, maxWords);
+    M.blockWords = maxWords; M.blocks = blocks.length;
+    if (oversizedLines) M.warnings.push(`${oversizedLines} sehr lange Zeile(n) mussten mitten im Satz geteilt werden.`);
+    if (parsed.noTimestamps) M.warnings.push("Keine Zeitstempel im Text gefunden; Text als Fließtext verwendet.");
+    renderMetrics(M);
+
+    // b) Notizen je Block
+    let notes = [];
+    for (let i = 0; i < blocks.length; i++) {
+      setRun((i / blocks.length) * 60, `Block ${i + 1} von ${blocks.length}: Notizen (${blocks[i].words} Wörter${blocks[i].from ? `, ${blocks[i].from}–${blocks[i].to}` : ""}) … Kontextlänge ${ctx} Tokens, Blockgröße bis ${maxWords} Wörter.`);
+      notes.push(...await notesForBlock(meta, blocks[i].text, `Block ${i + 1}/${blocks.length}`, M));
+    }
+
+    // c1) Zusammenführen, bis die Notizen in einen Durchgang passen
+    const sectionFixed = estimateTokens(sectionPrompt(meta, "", "TOP 99: Beispieltitel mit einigen Wörtern", meta.organ));
+    const notesBudget = ctx - sectionFixed - SECTION_ANSWER_TOKENS - TEMPLATE_TOKENS - SAFETY_TOKENS;
+    const mergeBudget = ctx - estimateTokens(mergePrompt(meta, "")) - MERGE_ANSWER_TOKENS - TEMPLATE_TOKENS - SAFETY_TOKENS;
+    const joinNotes = (arr) => arr.join("\n---\n");
+    let level = 0;
+    while (estimateTokens(joinNotes(notes)) > notesBudget && level < 4) {
+      level++;
+      const groups = packTexts(notes, mergeBudget);
+      const next = [];
+      for (let g = 0; g < groups.length; g++) {
+        setRun(60 + level * 5, `Zusammenführen Stufe ${level}: Teil ${g + 1} von ${groups.length} …`);
+        next.push(await ask(mergePrompt(meta, joinNotes(groups[g])), MERGE_ANSWER_TOKENS, `Zusammenführen ${level}.${g + 1}/${groups.length}`, M));
+      }
+      notes = next;
+    }
+    let allNotes = joinNotes(notes);
+    if (estimateTokens(allNotes) > notesBudget) {
+      const keepWords = Math.floor(notesBudget / TOKENS_PER_WORD);
+      allNotes = allNotes.split(/\s+/).slice(0, keepWords).join(" ");
+      M.warnings.push(`Notizen auch nach ${level} Stufen zu lang: auf ca. ${keepWords} Wörter gekürzt. Ende der Sitzung fehlt evtl. im Ergebnis!`);
+    }
+    M.mergeLevels = level;
+
+    // c2) Abschnitte
+    let sections = meta.agenda.map((a) => ({ label: `TOP ${a.n}: ${a.title}`, heading: `TOP ${a.n}: ${a.title}`, title: a.title }));
+    if (!sections.length) {
+      setRun(75, "Themen bilden (keine Tagesordnung angegeben) …");
+      const themes = parseThemeList(await ask(themesPrompt(meta, allNotes), THEMES_ANSWER_TOKENS, "Themen bilden", M));
+      if (!themes.length) throw new Error("Das Modell hat keine Themen geliefert.");
+      sections = themes.map((t, i) => ({ label: `Thema ${i + 1}: ${t}`, heading: `${i + 1}. ${t}`, title: t }));
+    }
+    const parts = [buildHeader(meta)];
+    for (let s = 0; s < sections.length; s++) {
+      setRun(78 + (s / sections.length) * 22, `Abschnitt ${s + 1} von ${sections.length}: ${sections[s].label} …`);
+      const body = await ask(sectionPrompt(meta, allNotes, sections[s].label, meta.organ), SECTION_ANSWER_TOKENS, `Abschnitt ${s + 1}/${sections.length}`, M);
+      parts.push(`${sections[s].heading}\n${dropRepeatedHeading(body, sections[s].title)}`);
+      $("result").value = parts.join("\n\n");
+    }
+    M.wordsOut = countWords($("result").value);
+    M.status = "fertig";
+    $("runBar").style.width = "100%";
+    setStatus($("runStatus"), "ok", "✔ Fertig. Ergebnis bitte gründlich gegenlesen.");
+  } catch (e) {
+    if (e instanceof Cancelled) {
+      M.status = "abgebrochen";
+      setStatus($("runStatus"), "warn", "Abgebrochen. Bisherige Teile und Messwerte bleiben stehen.");
+    } else {
+      M.status = "Fehler";
+      M.error = errText(e);
+      let x = explain(e);
+      if (cfg.sliding && /reicht nicht/.test(M.error)) x = `Dieses Modell sieht nur die letzten ${ctx} Tokens (gleitendes Fenster). Für die Niederschrift bitte Qwen3 1.7B oder Llama 3.2 3B wählen.`;
+      if (isEngineLost(M.error)) { state.engine = null; state.lostPending = !state.autoReloadUsed; }
+      setStatus($("runStatus"), "bad", `✘ Fehler: ${M.error}${x ? "\n" + x : ""}`);
+    }
+    M.wordsOut = countWords($("result").value);
+  } finally {
+    M.total = (performance.now() - M.t0) / 1000;
+    renderMetrics(M);
+    state.busy = false; state.running = false; state.cancel = false; keepAwake(false); refreshButtons();
+    if (state.lostPending) { clearTimeout(state.reloadTimer); state.reloadTimer = setTimeout(autoReload, AUTO_RELOAD_DELAY_MS); }
+  }
+};
+
+$("btnCancel").onclick = () => {
+  if (!state.running) return;
+  state.cancel = true;
+  try { state.engine && state.engine.interruptGenerate(); } catch {}
+  setStatus($("runStatus"), "warn", "Breche ab …");
+};
+
+function renderMetrics(M) {
+  const n = (x, d = 1) => (x == null || !isFinite(x) ? "–" : x.toFixed(d).replace(".", ","));
+  const total = M.total != null ? M.total : (performance.now() - M.t0) / 1000;
+  const tps = M.calls.filter((c) => c.decodeTps).map((c) => c.decodeTps);
+  const outTok = M.calls.reduce((a, c) => a + (c.outTokens || 0), 0);
+  const genSecs = M.calls.reduce((a, c) => a + c.secs, 0);
+  const l = [
+    `Status: ${M.status}`,
+    `Modell: ${M.model}`,
+    `Ladezeit Modell: ${fmtSecs(M.loadSecs)} (${M.loadedMB || "?"} MB)`,
+    `Kontextlänge (Konfiguration): ${M.ctx} Tokens`,
+    `Blockgröße: bis ${M.blockWords} Wörter, Blöcke: ${M.blocks}` + (M.repeat > 1 ? ` (Text ${M.repeat}× wiederholt – Lasttest)` : ""),
+    `Zusammenführ-Stufen: ${M.mergeLevels ?? "–"}`,
+    `Wörter ein: ${M.wordsIn.toLocaleString("de-DE")}, Wörter aus: ${(M.wordsOut || 0).toLocaleString("de-DE")}`,
+    `Gesamtdauer: ${fmtSecs(total)}`,
+    `Tokens pro Sekunde (Ausgabe): Mittel ${n(tps.length ? tps.reduce((a, b) => a + b, 0) / tps.length : null)}, gesamt ${n(genSecs ? outTok / genSecs : null)} (inkl. Einlesen)`,
+    `Temperatur: ${TEMPERATURE}, Startwert: ${SEED}`,
+    `Mini-Test vor dem Lauf: ${M.miniTestSecs != null ? fmtSecs(M.miniTestSecs) : "–"}`,
+  ];
+  if (M.error) l.push(`Fehler (wörtlich): ${M.error}`);
+  if (M.warnings.length) l.push("", "Hinweise:", ...M.warnings.map((w) => "• " + w));
+  l.push("", "Einzelschritte (Dauer | Tokens eingelesen → ausgegeben | Tokens/s Einlesen, Ausgabe | Ende):");
+  for (const c of M.calls) {
+    const end = c.finish === "length" ? "ABGESCHNITTEN (Längengrenze)" : (c.finish || "–");
+    l.push(`${c.label}: ${fmtSecs(c.secs)} | ${c.promptTokens ?? "–"} → ${c.outTokens ?? "–"} | ${n(c.prefillTps)}, ${n(c.decodeTps)} | ${end}${c.thinkRemoved ? " | Denkblock entfernt" : ""}`);
+  }
+  $("metrics").textContent = l.join("\n");
+}
+
+// ---------- Kopieren ----------
+async function copyText(text, btn) {
+  const old = btn.textContent;
+  try { await navigator.clipboard.writeText(text); btn.textContent = "✔ Kopiert"; }
+  catch { btn.textContent = "Kopieren nicht möglich – bitte markieren und Strg+C"; }
+  setTimeout(() => { btn.textContent = old; }, 1800);
+}
+$("btnCopy").onclick = (e) => copyText($("result").value, e.currentTarget);
+$("btnCopyRules").onclick = (e) => copyText($("rulesText").textContent, e.currentTarget);
+$("btnCopyMetrics").onclick = (e) => copyText($("metrics").textContent, e.currentTarget);
+
+refreshButtons();
+</script>
+</body>
+</html>
