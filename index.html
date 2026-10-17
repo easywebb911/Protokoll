@@ -95,8 +95,8 @@
     <label for="fMic">Mikrofon</label>
     <select id="fMic"><option value="">Standard-Mikrofon</option></select>
     <label class="check" style="margin-top:12px">
-      <input type="checkbox" id="fConsent">
-      <span>Alle Anwesenden sind mit der Aufnahme einverstanden.</span>
+      <input type="checkbox" id="fConsent" autocomplete="off">
+      <span>Alle Anwesenden wissen von der Aufnahme und sind einverstanden.</span>
     </label>
     <div class="btns">
       <button class="rec" id="btnRec" disabled>● Aufnahme starten</button>
@@ -149,6 +149,7 @@
       <button id="btnTxt" disabled>Als Textdatei</button>
       <button id="btnAudio" disabled>Audio sichern</button>
     </div>
+    <div class="status ok" id="exportStatus" role="status"></div>
     <div class="status">Das Volltranskript ist eine eigene Datei, getrennt von der späteren offiziellen Niederschrift. Die Audiodatei wird nur gespeichert, wenn du „Audio sichern“ drückst.</div>
   </div>
 
@@ -164,6 +165,23 @@
         <input type="file" id="fFile" accept="audio/*,video/mp4,video/webm" hidden>
       </div>
       <div class="status" id="fileStatus"></div>
+      <details id="privacyBox" style="margin-top:12px">
+        <summary>Datenschutz: Was bleibt hier, was geht raus?</summary>
+        <div class="status" style="color:var(--ink)">
+<b>Bleibt auf diesem Gerät</b>
+• Die Aufnahme und der erkannte Text. Sie werden nie gesendet. Sie liegen nur im Arbeitsspeicher, bis du „Löschen / Neu starten“ drückst oder die Seite schließt.
+• Dateien, die du exportierst (Word, Text, Audio), liegen danach in deinem Downloads-Ordner. Nach der Freigabe löschen, Audio zuerst.
+
+<b>Geht nach draußen – nur zum Laden von Programm und Modell</b>
+• Beim Öffnen der Seite: GitHub (liefert die Seite aus) und jsDelivr (Baustein für Word-Dateien).
+• Beim Laden des Erkennungsmodells: jsDelivr (Programm für die Erkennung) und Hugging Face (das Modell selbst). Hugging Face kann dafür an eigene Speicher-Server weiterleiten.
+• Diese Dienste sehen dabei deine IP-Adresse und die Kennung deines Browsers. Aufnahmen und Texte bekommen sie nie.
+
+<b>Wird gespeichert</b>
+• Von deinen Eingaben nur die Ersatzliste, in diesem Browser. „Liste löschen“ entfernt sie.
+• Der Browser legt außerdem Programm- und Modelldateien ab, damit sie nicht jedes Mal neu geladen werden. Darin sind keine Aufnahmen und keine Texte.
+• Der Haken „Alle Anwesenden wissen von der Aufnahme …“ wird nicht gespeichert. Er muss vor jeder Aufnahme neu gesetzt werden.</div>
+      </details>
     </details>
   </div>
 </main>
@@ -350,6 +368,9 @@ function refreshButtons() {
   $("btnReset").disabled = t;
 }
 $("fConsent").onchange = refreshButtons;
+// Einwilligung gilt nur für eine Aufnahme: nie speichern, nie vom Browser wiederherstellen lassen
+$("fConsent").checked = false;
+window.addEventListener("pageshow", () => { if (state.rec === "idle") { $("fConsent").checked = false; refreshButtons(); } });
 
 // ---------- Aufnahme ----------
 function setRecStatus(cls, text) {
@@ -747,6 +768,8 @@ function resetAll() {
     segs: [], hiddenCount: 0,
   });
   for (const id of ["fTitle", "fPart"]) $(id).value = "";
+  $("fConsent").checked = false;
+  $("exportStatus").textContent = "";
   $("fDate").value = dateStamp();
   $("timer").textContent = "00:00:00";
   $("trBar").style.width = "0%";
@@ -803,10 +826,12 @@ $("btnFileTr").onclick = async () => {
 };
 
 // ---------- Export ----------
+const EXPORT_HINT = "Datei liegt im Downloads-Ordner. Nach der Freigabe löschen; Audio zuerst.";
 function download(blob, name) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  $("exportStatus").textContent = `✔ ${name}: ${EXPORT_HINT}`;
 }
 function metaInfo() {
   const d = $("fDate").value;
