@@ -173,8 +173,8 @@
 • Dateien, die du exportierst (Word, Text, Audio), liegen danach in deinem Downloads-Ordner. Nach der Freigabe löschen, Audio zuerst.
 
 <b>Geht nach draußen – nur zum Laden von Programm und Modell</b>
-• Beim Öffnen der Seite: GitHub (liefert die Seite aus) und jsDelivr (Baustein für Word-Dateien).
-• Beim Laden des Erkennungsmodells: jsDelivr (Programm für die Erkennung) und Hugging Face (das Modell selbst). Hugging Face kann dafür an eigene Speicher-Server weiterleiten.
+• Beim Öffnen der Seite: GitHub (liefert die Seite und alle Programmteile aus, auch den Baustein für Word-Dateien und das Programm für die Erkennung).
+• Beim Laden des Erkennungsmodells: Hugging Face (das Modell selbst). Hugging Face kann dafür an eigene Speicher-Server weiterleiten.
 • Diese Dienste sehen dabei deine IP-Adresse und die Kennung deines Browsers. Aufnahmen und Texte bekommen sie nie.
 
 <b>Wird gespeichert</b>
@@ -186,7 +186,7 @@
   </div>
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/docx@9.11.0/dist/index.iife.js" onerror="window.__docxFail=true"></script>
+<script src="./vendor/docx-9.11.0/index.iife.js" onerror="window.__docxFail=true"></script>
 <script type="module">
 import {
   fmtTime, dateStamp, timeStamp, mixToMono, buildTranscriptDoc,
@@ -194,7 +194,9 @@ import {
   normalizePairs, applyReplacements, createResampler,
 } from "./helpers.js";
 
-const TF_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1";
+// Programmteile liegen im eigenen Repo (vendor/, siehe vendor/README.md); nur die Modelle kommen von huggingface.co
+const VENDOR_TF_DIR = "./vendor/transformers-4.3.1/";
+const TF_URL = VENDOR_TF_DIR + "transformers.min.js";
 const SR = 16000;
 const REPL_KEY = "protokoll.ersatzliste.v1"; // einziger Eintrag in localStorage
 const BACKLOG_WARN_SEC = 600; // ab 10 min Rückstand warnen
@@ -278,6 +280,20 @@ window.addEventListener("beforeunload", (e) => {
   if (state.rec === "recording" || state.rec === "paused" || state.segs.length || state.blob) { e.preventDefault(); e.returnValue = ""; }
 });
 
+// onnxruntime (Rechenkern der Erkennung) aus vendor/ statt von cdn.jsdelivr.net laden.
+// transformers.js setzt beim Import selbst https://cdn.jsdelivr.net/npm/onnxruntime-web@…/dist/<datei>
+// und wählt dabei die passende Variante (.asyncify oder ohne). Hier wird nur der Ordner ersetzt.
+function useLocalOnnxRuntime(env) {
+  const wasm = env && env.backends && env.backends.onnx && env.backends.onnx.wasm;
+  if (!wasm) return;
+  const dir = new URL(VENDOR_TF_DIR, location.href).href;
+  const local = (u) => dir + String(u).split("/").pop();
+  const p = wasm.wasmPaths;
+  wasm.wasmPaths = p && typeof p === "object" && p.mjs && p.wasm
+    ? { mjs: local(p.mjs), wasm: local(p.wasm) }
+    : { mjs: dir + "ort-wasm-simd-threaded.asyncify.mjs", wasm: dir + "ort-wasm-simd-threaded.asyncify.wasm" };
+}
+
 // ---------- Modell laden ----------
 $("btnLoad").onclick = async () => {
   if (state.loading) return;
@@ -291,6 +307,7 @@ $("btnLoad").onclick = async () => {
     if (!state.tf) {
       state.tf = await import(TF_URL);
       state.tf.env.allowLocalModels = false;
+      useLocalOnnxRuntime(state.tf.env);
     }
     const files = {};
     const progress = (p) => {
