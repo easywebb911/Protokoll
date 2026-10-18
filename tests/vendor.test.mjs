@@ -42,9 +42,10 @@ test("index.html lädt nichts mehr von cdn.jsdelivr.net (außer Kommentaren)", (
   assert.ok(code.includes("useLocalOnnxRuntime(state.tf.env);"));
 });
 
-test("Service Worker: v3, kleine Vendor-Dateien in SHELL, wasm nicht", () => {
+test("Service Worker: v4, kleine Vendor-Dateien in SHELL, wasm nicht", () => {
   const sw = read("sw.js").toString("utf8");
-  assert.ok(sw.includes('const VERSION = "protokoll-v3";'));
+  assert.ok(sw.includes('const VERSION = "protokoll-v4";'));
+  assert.ok(sw.includes('"./niederschrift-ui.js"'), "Niederschrift-Oberfläche offline verfügbar");
   const shell = sw.slice(sw.indexOf("const SHELL"), sw.indexOf("];", sw.indexOf("const SHELL")));
   assert.ok(shell.includes("./vendor/docx-9.11.0/index.iife.js"));
   assert.ok(shell.includes("./vendor/transformers-4.3.1/transformers.min.js"));

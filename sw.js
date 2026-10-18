@@ -1,8 +1,8 @@
 // Offline-Speicher für den Programmcode. Aufnahmen und Texte werden hier nie gespeichert oder gesendet.
-const VERSION = "protokoll-v3";
+const VERSION = "protokoll-v4";
 // Kleine Dateien gleich beim Installieren; die großen onnxruntime-Dateien (vendor/…/*.wasm, ca. 27 MB)
 // erst beim ersten Gebrauch (siehe fetch: vendor/ wird wie eine eigene Datei behandelt).
-const SHELL = ["./", "./index.html", "./helpers.js", "./pcm-worklet.js",
+const SHELL = ["./", "./index.html", "./helpers.js", "./pcm-worklet.js", "./niederschrift-ui.js",
   "./vendor/docx-9.11.0/index.iife.js", "./vendor/transformers-4.3.1/transformers.min.js"];
 // Nur noch von niederschrift-probe.html genutzt (web-llm); index.html lädt nichts mehr von dort.
 const CDN = "https://cdn.jsdelivr.net/";

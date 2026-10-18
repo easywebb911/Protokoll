@@ -371,3 +371,147 @@ export function collapseRepeats(text, { minCount = REPEAT_MIN_COUNT, maxWords = 
   }
   return { text: hits ? out.join(" ") : String(text || "").trim(), hits };
 }
+
+// ---------- Niederschrift ohne KI: Kandidatensuche per Stichwörtern (rein, deterministisch) ----------
+// Die Suche findet nur Stichwörter. Sie kann falsche Stellen melden und echte Stellen übersehen.
+
+const WB = "(?<![\\p{L}\\p{N}])"; // Wortanfang (auch für Umlaute)
+const WE = "(?![\\p{L}\\p{N}])";  // Wortende
+const L = "\\p{L}*";
+const MONTHS = "Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember";
+const WEEKDAYS = "Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag";
+
+export const CANDIDATE_RULES = [
+  { kind: "Beschluss", label: "Beschluss", re: new RegExp(
+    `${WB}(beschlie(ß|ss)${L}|beschloss${L}|beschluss${L}|beschlüss${L}|abstimm${L}|abgestimmt${L}|einstimmig${L}|gegenstimme${L}|enthaltung${L}|angenommen|abgelehnt)${WE}|${WB}wir machen das so${WE}`, "iu") },
+  { kind: "Zuständigkeit", label: "Zuständigkeit", re: new RegExp(
+    `${WB}(übernimmt|übernehme|übernehmen|kümmert sich|kümmere mich|zuständig|aufgabe${L})${WE}|${WB}bis zum \\d{1,2}\\.|${WB}bis (zur )?nächste[nr]? (Woche|Sitzung)${WE}`, "iu") },
+  { kind: "Termin", label: "Termin", re: new RegExp(
+    `${WB}\\d{1,2}\\.\\d{1,2}\\.(\\d{2,4})?|${WB}\\d{1,2}\\.\\s?(${MONTHS})${WE}|${WB}(nächste[nr]?|kommende[nr]?) (${WEEKDAYS})${WE}`, "iu") },
+];
+
+const normSpace = (s) => String(s || "").replace(/\s+/g, " ").trim();
+
+// Satzende: nach . ! ? … mit Leerraum – aber nicht nach Zahl+Punkt („12. November“, „12.11. um“)
+// und nicht nach häufigen Abkürzungen („z. B.“, „Nr.“).
+const SENTENCE_BREAK = /(?<=[.!?…])(?<![0-9]\.)(?<!(?<![\p{L}])(?:z|z\. ?B|Dr|Nr|bzw|ca|usw|ggf|vgl|Prof|Abs|Art|St|Hr|Fr)\.)\s+/u;
+
+// Zerlegt Transkript-Zeilen [{start, text}] in Sätze mit Zeitmarke und Zeilennummer.
+export function splitSentences(lines) {
+  const out = [];
+  lines.forEach((l, lineIndex) => {
+    for (const s of normSpace(l.text).split(SENTENCE_BREAK)) if (s) out.push({ text: s, start: l.start, lineIndex });
+  });
+  return out;
+}
+
+// Prüft, ob ein Zitat wörtlich im Transkript vorkommt (Leerräume werden vereinheitlicht).
+export function verifyQuote(quote, lines) {
+  const q = normSpace(quote);
+  return !!q && normSpace(lines.map((l) => l.text).join(" ")).includes(q);
+}
+
+// Liefert Kandidaten {id, kind, start, lineIndex, sentence, quote, match}. Zitat = Satz plus je ein Satz davor/danach.
+// Kandidaten, deren Zitat nicht wörtlich im Transkript steht, werden verworfen (dropped zählt sie).
+export function findCandidates(lines) {
+  const sents = splitSentences(lines);
+  const found = [];
+  let dropped = 0;
+  sents.forEach((s, i) => {
+    for (const rule of CANDIDATE_RULES) {
+      const m = s.text.match(rule.re);
+      if (!m) continue;
+      const quote = [sents[i - 1], s, sents[i + 1]].filter(Boolean).map((x) => x.text).join(" ");
+      if (!verifyQuote(quote, lines)) { dropped++; continue; }
+      found.push({ id: `${rule.kind}|${s.start}|${s.text}`, kind: rule.kind, start: s.start, lineIndex: s.lineIndex, sentence: s.text, quote, match: m[0] });
+    }
+  });
+  return { candidates: found, dropped };
+}
+
+// TOP-Zuordnung über Marker: markers = [{lineIndex, topId}]. Jede Zeile gehört zum letzten Marker davor (oder null).
+export function assignTops(lineCount, markers) {
+  const at = new Map(markers.map((m) => [m.lineIndex, m.topId]));
+  const out = [];
+  let cur = null;
+  for (let i = 0; i < lineCount; i++) {
+    if (at.has(i)) cur = at.get(i);
+    out.push(cur);
+  }
+  return out;
+}
+
+// Satzvorlagen (der Wortlaut nach „…“ wird von Hand ergänzt; nichts wird erfunden)
+export function decisionSentence(gremium) {
+  return `Die ${String(gremium || "").trim() || "…"} beschließt …`;
+}
+export function dutySentence(anrede, name) {
+  const a = anrede === "Frau" ? "Frau" : "Herr";
+  return `${a} ${String(name || "").trim() || "…"} übernimmt …`;
+}
+
+// Word-Dokument der Niederschrift. data: {head, tops:[{title, summary, decisions, duties, dates}], unassigned, approved}
+// repl: Ersatzliste, wird auf alle Texte angewendet.
+export function buildMinutesDoc(docxLib, data, repl = []) {
+  const { Document, Paragraph, TextRun, Header, Footer, AlignmentType, PageNumber, HeadingLevel } = docxLib;
+  const FONT = "Arial";
+  const R = (t) => applyReplacements(String(t ?? ""), repl);
+  const run = (text, opts = {}) => new TextRun({ text: R(text), font: FONT, size: 22, ...opts });
+  const para = (children, opts = {}) => new Paragraph({ spacing: { after: 80 }, ...opts, children });
+  const lines = (t) => String(t || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+  const h = data.head || {};
+  const DRAFT = "ENTWURF – nicht freigegeben";
+  const children = [];
+
+  if (!data.approved) children.push(para([run(DRAFT, { bold: true, color: "B00020", size: 28 })], { spacing: { after: 200 } }));
+  children.push(new Paragraph({ heading: HeadingLevel.TITLE, spacing: { after: 120 }, children: [run("Niederschrift", { bold: true, size: 36 })] }));
+  if (h.titel) children.push(para([run(h.titel, { bold: true, size: 26 })], { spacing: { after: 200 } }));
+
+  const zeit = [h.beginn, h.ende].filter(Boolean).join(" – ");
+  const kopf = [["Gremium", h.gremium], ["Datum", h.datum], ["Zeit", zeit ? zeit + " Uhr" : ""], ["Ort", h.ort], ["Vorsitz", h.vorsitz], ["Schriftführer", h.schriftfuehrer]];
+  for (const [k, v] of kopf) if (v) children.push(para([run(`${k}: `, { bold: true }), run(v)]));
+  const anw = lines(h.anwesende), ent = lines(h.entschuldigt);
+  if (anw.length) children.push(para([run("Anwesend: ", { bold: true }), run(anw.join(", "))]));
+  if (ent.length) children.push(para([run("Entschuldigt: ", { bold: true }), run(ent.join(", "))]));
+
+  const tops = data.tops || [];
+  if (tops.length) {
+    children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { before: 300, after: 120 }, children: [run("Tagesordnung", { bold: true, size: 28 })] }));
+    tops.forEach((t, i) => children.push(para([run(`TOP ${i + 1}: ${t.title || ""}`)])));
+  }
+
+  const listBlock = (title, items) => {
+    const it = items.map((x) => String(x || "").trim()).filter(Boolean);
+    if (!it.length) return;
+    children.push(para([run(title, { bold: true })], { spacing: { before: 120, after: 60 } }));
+    for (const x of it) children.push(para([run("– " + x)], { indent: { left: 360 } }));
+  };
+  const section = (heading, t) => {
+    children.push(new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { before: 300, after: 120 }, children: [run(heading, { bold: true, size: 24 })] }));
+    for (const p of lines(t.summary)) children.push(para([run(p)]));
+    listBlock("Beschlüsse:", t.decisions || []);
+    listBlock("Zuständigkeiten:", t.duties || []);
+    listBlock("Termine:", t.dates || []);
+  };
+  tops.forEach((t, i) => section(`TOP ${i + 1}: ${t.title || ""}`, t));
+  const u = data.unassigned;
+  if (u && [u.decisions, u.duties, u.dates].some((a) => a && a.length)) section("Ohne Zuordnung zu einem TOP", { summary: "", ...u });
+
+  children.push(para([run("")], { spacing: { before: 600 } }));
+  for (const [rolle, name] of [["Vorsitz", h.vorsitz], ["Schriftführer", h.schriftfuehrer]]) {
+    children.push(para([run("_________________________________")], { spacing: { before: 400, after: 0 } }));
+    children.push(para([run(name ? `${rolle}: ${name}` : rolle)]));
+  }
+
+  return new Document({
+    creator: "Protokoll-Assistent",
+    title: data.approved ? "Niederschrift" : `Niederschrift (${DRAFT})`,
+    styles: { default: { document: { run: { font: FONT, size: 22 } } } },
+    sections: [{
+      properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } },
+      headers: data.approved ? undefined : { default: new Header({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [run(DRAFT, { bold: true, color: "B00020" })] })] }) },
+      footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [run("-"), new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: 22 }), run("-")] })] }) },
+      children,
+    }],
+  });
+}

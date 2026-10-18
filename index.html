@@ -46,6 +46,24 @@
   .repl span { flex:1; }
   details summary { cursor:pointer; color:var(--acc); margin-top:6px; }
   small { color:var(--mut); }
+  /* Niederschrift (niederschrift-ui.js) */
+  #minutesRoot h3 { font-size:1rem; margin:18px 0 6px; }
+  .mrow { display:flex; gap:8px; align-items:center; margin:4px 0; }
+  .mrow input { flex:1; }
+  .mnum { flex:0 0 52px; color:var(--mut); font-size:.9rem; }
+  .mlines { max-height:360px; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:4px 8px; }
+  .mline { display:flex; gap:8px; align-items:flex-start; padding:4px 0; border-bottom:1px solid var(--line); }
+  .mline .t { flex:0 0 70px; color:var(--mut); font-variant-numeric:tabular-nums; font-size:.9rem; }
+  .mline .x { flex:1; font-size:.92rem; }
+  .mline select { flex:0 0 170px; width:170px; padding:4px; }
+  .mline.marked { background: color-mix(in srgb, var(--acc) 10%, transparent); }
+  .cand { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:8px 0; }
+  .cand.übernommen { border-color:var(--ok); }
+  .cand.verworfen { opacity:.6; }
+  .cand .chead select { width:auto; padding:3px 6px; }
+  .cand blockquote { margin:6px 0; padding:4px 10px; border-left:3px solid var(--line); font-size:.92rem; }
+  .msect { border-top:1px solid var(--line); padding-top:8px; margin-top:10px; }
+  .mexcerpt { white-space:pre-wrap; font:13px/1.4 ui-monospace, Consolas, monospace; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:6px 8px; max-height:200px; overflow:auto; margin:0; }
 </style>
 </head>
 <body>
@@ -132,8 +150,8 @@
   </div>
 
   <div class="card off" aria-disabled="true">
-    <h2>Protokoll (folgt)</h2>
-    <div class="status">Die Erstellung der Niederschrift kommt in einer späteren Version.</div>
+    <h2>Protokoll mit KI (folgt)</h2>
+    <div class="status">Die Unterstützung durch ein Sprachmodell kommt in einer späteren Version. Eine Niederschrift ohne KI erstellst du unten unter „6 · Niederschrift“.</div>
     <div class="btns"><button disabled>Protokoll erstellen</button></div>
   </div>
 
@@ -151,6 +169,13 @@
     </div>
     <div class="status ok" id="exportStatus" role="status"></div>
     <div class="status">Das Volltranskript ist eine eigene Datei, getrennt von der späteren offiziellen Niederschrift. Die Audiodatei wird nur gespeichert, wenn du „Audio sichern“ drückst.</div>
+  </div>
+
+  <div class="card">
+    <details id="minutesBox">
+      <summary><h2 style="display:inline">6 · Niederschrift (ohne KI)</h2></summary>
+      <div id="minutesRoot"></div>
+    </details>
   </div>
 
   <div class="card">
@@ -193,6 +218,7 @@ import {
   Chunker, planChunks, sessionTime, pauseText, analyzeLevel, filterHallucinations, collapseRepeats,
   normalizePairs, applyReplacements, createResampler,
 } from "./helpers.js";
+import { initMinutes } from "./niederschrift-ui.js";
 
 // Programmteile liegen im eigenen Repo (vendor/, siehe vendor/README.md); nur die Modelle kommen von huggingface.co
 const VENDOR_TF_DIR = "./vendor/transformers-4.3.1/";
@@ -793,6 +819,7 @@ function resetAll() {
   $("fileStatus").textContent = "";
   $("fFile").value = "";
   $("segBox").open = false;
+  minutes.reset(); $("minutesBox").open = false;
   setRecStatus("", "Gelöscht. Bereit für eine neue Aufnahme.");
   keepAwake(false);
   renderSegs(); updateTrStatus(); updateAwakeHint(); refreshButtons();
@@ -891,6 +918,23 @@ $("btnAudio").onclick = () => {
   const ext = (state.blob.type || "").includes("mp4") ? "m4a" : (state.blob.type || "").includes("webm") ? "webm" : "audio";
   download(state.blob, `Aufnahme_${timeStamp()}.${ext}`);
 };
+
+// ---------- Niederschrift ohne KI (niederschrift-ui.js): liest nur Transkript und Ersatzliste ----------
+const minutes = initMinutes({
+  root: $("minutesRoot"),
+  getLines: () => state.segs.filter((s) => s.kind !== "pause" && s.text && s.text.trim()).map((s) => ({ seg: s, start: s.start, text: applyReplacements(s.text, state.repl) })),
+  getRepl: () => state.repl,
+  getPrefill: () => ({
+    datum: $("fDate").value,
+    titel: $("fTitle").value.trim(),
+    anwesende: $("fPart").value.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean),
+    start: state.startWall ? new Date(state.startWall) : null,
+    ende: state.startWall && state.durationSec ? new Date(state.startWall + state.durationSec * 1000) : null,
+  }),
+  getDocx: () => window.docx,
+  download,
+  exportHint: EXPORT_HINT,
+});
 
 updateTrStatus();
 refreshButtons();
