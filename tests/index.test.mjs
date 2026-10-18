@@ -39,7 +39,8 @@ test("Export-Hinweis nach jedem Download", () => {
 test("Datenschutz-Box unter „Weitere Optionen“ mit allen Punkten", () => {
   const opt = html.slice(html.indexOf("<summary>Weitere Optionen</summary>"));
   const box = opt.slice(opt.indexOf('<details id="privacyBox"'), opt.indexOf("</details>"));
-  for (const t of ["Bleibt auf diesem Gerät", "Geht nach draußen", "Wird gespeichert", "GitHub", "jsDelivr", "Hugging Face", "IP-Adresse", "nie gesendet", "nur die Ersatzliste"]) {
+  for (const t of ["Bleibt auf diesem Gerät", "Geht nach draußen", "Wird gespeichert", "GitHub", "Hugging Face", "IP-Adresse", "nie gesendet", "nur die Ersatzliste"]) {
     assert.ok(box.includes(t), t);
   }
+  assert.ok(!/jsdelivr/i.test(box), "jsDelivr wird von dieser Seite nicht mehr genutzt");
 });
